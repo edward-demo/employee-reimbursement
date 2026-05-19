@@ -7,7 +7,7 @@ Provide a relational schema baseline for the current reimbursement use cases, ru
 - Target relational database: PostgreSQL-compatible.
 - Monetary amounts use `numeric(12,2)` and Philippine Peso (`PHP`) by default.
 - Identifiers use UUIDs for database keys and separate human-readable numbers for requests and employees.
-- Files are stored in object storage or a document service; the database stores metadata and storage references.
+- Files are stored in object storage or a document service; the database stores metadata and storage references. In Supabase QAT, document records store a private bucket name and object path.
 - Reporting metrics are derived from transactional tables unless a future performance need justifies materialized views.
 - QAT authentication uses Supabase Auth. The internal-site version will use Windows Active Directory.
 - Application records reference internal `users.user_id` values. External identity subjects are stored in `user_identity_links` so the authentication provider can change without rewriting reimbursement, approval, document, notification, or audit records.
@@ -260,7 +260,8 @@ create table reimbursement_documents (
   file_name varchar(255) not null,
   mime_type varchar(100) not null,
   file_size_bytes integer not null check (file_size_bytes > 0 and file_size_bytes <= 10485760),
-  storage_url varchar(1000) not null,
+  storage_bucket varchar(100) not null default 'reimbursement-documents',
+  storage_path varchar(1000) not null unique,
   checksum_sha256 varchar(64) null,
   uploaded_by_user_id uuid not null references users(user_id),
   uploaded_at timestamptz not null default now(),

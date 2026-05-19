@@ -255,7 +255,8 @@ Key attributes:
 - `file_name`
 - `mime_type`
 - `file_size_bytes`
-- `storage_url`
+- `storage_bucket`
+- `storage_path`
 - `uploaded_by_user_id`
 - `uploaded_at`
 
