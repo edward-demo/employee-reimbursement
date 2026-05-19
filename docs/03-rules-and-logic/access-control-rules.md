@@ -11,6 +11,9 @@ Define what each user role can see and do in the reimbursement system.
 
 ## Rules
 
+### ACL-000: Authentication Provider Strategy
+QAT authentication is handled by Supabase Auth. The later internal-site deployment will authenticate users through Windows Active Directory. Application authorization remains based on internal roles, employee profiles, and manager scope after the authenticated identity is resolved to an internal user record.
+
 ### ACL-001: Role-Based Portal Routing
 Authenticated users are routed to a portal based on role: Employee, Admin, or Line Manager.
 
@@ -36,3 +39,4 @@ Logging out clears the selected role and returns the user to the initial viewer 
 - Are HR Admin and Finance Admin separate roles?
 - Can line managers see medical document contents, or only request summaries?
 - Should employees be able to edit profile data or only view it?
+- Which Active Directory identifier should be treated as the immutable identity key during migration?

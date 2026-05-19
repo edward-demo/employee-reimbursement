@@ -411,23 +411,26 @@ INDEXES:
 - **NFR-007:** Document files shall be stored securely with access controls
 - **NFR-008:** User authentication required for all portal access
 - **NFR-009:** Role-based access control (RBAC) enforced for all operations
+- **NFR-010:** QAT authentication shall use Supabase Auth as the credential and session provider
+- **NFR-011:** The later internal-site deployment shall support Windows Active Directory as the authentication provider
+- **NFR-012:** Application authorization, ownership, decisions, and audit records shall reference internal user records rather than provider-specific authentication records
 
 ### 7.3 Usability
-- **NFR-010:** System shall be responsive and work on desktop (≥640px) and mobile (<640px)
-- **NFR-011:** Document preview shall adapt: side-by-side on desktop, overlay on mobile
-- **NFR-012:** All forms shall provide inline validation and error messages
-- **NFR-013:** Status changes shall be visually indicated with color-coded badges
-- **NFR-014:** Philippine Peso (₱) currency symbol shall be used throughout
+- **NFR-013:** System shall be responsive and work on desktop (≥640px) and mobile (<640px)
+- **NFR-014:** Document preview shall adapt: side-by-side on desktop, overlay on mobile
+- **NFR-015:** All forms shall provide inline validation and error messages
+- **NFR-016:** Status changes shall be visually indicated with color-coded badges
+- **NFR-017:** Philippine Peso (₱) currency symbol shall be used throughout
 
 ### 7.4 Accessibility
-- **NFR-015:** System shall follow WCAG 2.1 Level AA standards
-- **NFR-016:** All interactive elements shall be keyboard accessible
-- **NFR-017:** Color indicators shall be supplemented with icons
+- **NFR-018:** System shall follow WCAG 2.1 Level AA standards
+- **NFR-019:** All interactive elements shall be keyboard accessible
+- **NFR-020:** Color indicators shall be supplemented with icons
 
 ### 7.5 Data Integrity
-- **NFR-018:** All financial calculations shall be accurate to 2 decimal places
-- **NFR-019:** File uploads shall be validated for format and size
-- **NFR-020:** All database transactions shall be atomic (ACID compliant)
+- **NFR-021:** All financial calculations shall be accurate to 2 decimal places
+- **NFR-022:** File uploads shall be validated for format and size
+- **NFR-023:** All database transactions shall be atomic (ACID compliant)
 
 ---
 
@@ -462,17 +465,17 @@ Muted:     #6B7280 (Gray - secondary text)
 - **PWD:** Blue background (#3B82F6/10%), Blue text (#3B82F6), Blue border
 
 ### 8.2 Navigation
-- **NFR-021:** Employee portal shall have 3 tabs: Overview, Profile, My Requests
-- **NFR-022:** Admin portal shall have 3 tabs: Overview, Requests, Reports
-- **NFR-023:** Active tab shall be visually distinguished with primary color background
-- **NFR-024:** Header shall display user name, role, and logout button
+- **UI-001:** Employee portal shall have 3 tabs: Overview, Profile, My Requests
+- **UI-002:** Admin portal shall have 3 tabs: Overview, Requests, Reports
+- **UI-003:** Active tab shall be visually distinguished with primary color background
+- **UI-004:** Header shall display user name, role, and logout button
 
 ### 8.3 Forms
-- **NFR-025:** Required fields shall be marked with asterisk (*)
-- **NFR-026:** Form validation errors shall appear inline below fields
-- **NFR-027:** File upload areas shall show drag-and-drop support
-- **NFR-028:** Calculated fields (subtotals, totals) shall update in real-time
-- **NFR-029:** Medicine and receipt cards shall be deletable (if more than 1 exists)
+- **UI-005:** Required fields shall be marked with asterisk (*)
+- **UI-006:** Form validation errors shall appear inline below fields
+- **UI-007:** File upload areas shall show drag-and-drop support
+- **UI-008:** Calculated fields (subtotals, totals) shall update in real-time
+- **UI-009:** Medicine and receipt cards shall be deletable (if more than 1 exists)
 
 ---
 
@@ -524,13 +527,17 @@ src/
 
 ### 10.1 Assumptions
 - Employees have valid company email addresses for authentication
+- QAT users will authenticate through Supabase Auth
+- Internal-site users will authenticate through Windows Active Directory after migration
+- The reimbursement system will keep an internal user record that maps to the current authentication provider identity
 - Employees have access to digital copies of prescriptions and receipts
 - HR/Admin personnel have proper training on reimbursement policies
 - File storage system is available for document uploads
 - Users have modern web browsers (Chrome, Firefox, Safari, Edge - latest versions)
 
 ### 10.2 Dependencies
-- Authentication system (future integration)
+- Supabase Auth for QAT authentication
+- Windows Active Directory integration for the later internal-site deployment
 - File storage service (local or cloud)
 - Database server (PostgreSQL, MySQL, or similar)
 - HTTPS/SSL certificates for production
@@ -563,6 +570,7 @@ src/
 ### 12.1 Planned Features
 - Email notifications for status changes
 - SMS alerts for urgent approvals
+- Migration from QAT Supabase Auth to internal Windows Active Directory authentication
 - Integration with payroll system for automatic disbursement
 - Mobile application (iOS and Android)
 - OCR for automatic prescription data extraction
