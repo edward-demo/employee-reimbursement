@@ -44,16 +44,16 @@ VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
 The anon key is expected in frontend apps. Do not put the service-role key in `.env.local` for the browser app.
 
 ### 5. Install the Supabase JS Client
-Install the frontend client dependency:
+`package.json` already includes the Supabase browser client. Install dependencies:
 
 ```bash
-pnpm add @supabase/supabase-js
+pnpm install
 ```
 
 If you use npm instead:
 
 ```bash
-npm install @supabase/supabase-js
+npm install
 ```
 
 ### 6. Create Your First QAT User
