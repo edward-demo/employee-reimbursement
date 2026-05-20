@@ -3,6 +3,8 @@
 ## What Was Generated
 - `supabase/migrations/202605190001_initial_schema.sql`
 - `supabase/migrations/202605190002_rls_policies.sql`
+- `supabase/migrations/202605200002_line_manager_profile_attribute.sql`
+- `supabase/migrations/202605200003_authenticated_table_grants.sql`
 - `supabase/migrations/202605190003_storage.sql`
 - `.env.example`
 - `src/lib/supabase.ts`
@@ -19,9 +21,13 @@ In Supabase Dashboard, open SQL Editor and run these files in order:
 
 1. `supabase/migrations/202605190001_initial_schema.sql`
 2. `supabase/migrations/202605190002_rls_policies.sql`
-3. `supabase/migrations/202605190003_storage.sql`
+3. `supabase/migrations/202605200002_line_manager_profile_attribute.sql`
+4. `supabase/migrations/202605200003_authenticated_table_grants.sql`
+5. `supabase/migrations/202605190003_storage.sql`
 
 Run each file as a separate SQL query. If one fails, stop and fix that file before running the next one.
+
+If you see `permission denied for table ...` while using the app, run `supabase/migrations/202605200003_authenticated_table_grants.sql` in the SQL Editor. The grants give Supabase authenticated sessions table-level access, while RLS policies still control which rows they can actually see or change.
 
 ### 3. Configure Auth
 In Supabase Dashboard:
@@ -78,6 +84,22 @@ Supabase auth.users.id
 ### 7. Assign Role and Employee Profile
 The first user will not automatically be an employee or admin. Use the SQL Editor to assign profile and role data during QAT.
 
+For the current QAT test users, use this seed after the Supabase Auth users have been created:
+
+```text
+supabase/seeds/202605200001_qat_user_department_mappings.sql
+```
+
+Open the file, paste it into the Supabase SQL Editor, and run it once. It reads the users from Supabase Authentication, creates or updates the matching app records, links each Supabase Auth ID to `public.users`, fills display names, assigns departments from email hints, assigns starting Employee/Admin roles, sets the line-manager yes/no flag, and creates employee profile records.
+
+Current special mappings:
+
+- `edward.sal365@gmail.com` belongs to `Product Development`.
+- `financeguy@test123.com` gets the display name `Finance Guy`.
+- `linemanagerguy@test123.com` gets the display name `Line Manager Guy`.
+- HR and Finance users receive both `employee` and `admin` roles so they can use employee self-service and admin reimbursement functions.
+- Line-manager users are marked with `employee_profiles.is_line_manager = true`; line manager is not assigned as a role.
+
 Example shape:
 
 ```sql
@@ -108,5 +130,5 @@ The storage policies allow users to upload into their own internal-user folder. 
 ## Notes
 - RLS is enabled on the application tables.
 - Admin visibility comes from the `admin` role in `public.user_roles`.
-- Line-manager visibility uses either direct report mapping or same-department matching.
+- Line-manager visibility uses `employee_profiles.is_line_manager = true` plus either direct report mapping or same-department matching.
 - The model intentionally references `public.users.user_id` instead of Supabase Auth IDs so the later Windows Active Directory migration can keep reimbursement records unchanged.

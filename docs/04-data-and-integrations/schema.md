@@ -11,13 +11,15 @@ Provide a relational schema baseline for the current reimbursement use cases, ru
 - Reporting metrics are derived from transactional tables unless a future performance need justifies materialized views.
 - QAT authentication uses Supabase Auth. The internal-site version will use Windows Active Directory.
 - Application records reference internal `users.user_id` values. External identity subjects are stored in `user_identity_links` so the authentication provider can change without rewriting reimbursement, approval, document, notification, or audit records.
+- Roles are additive. A user may have more than one row in `user_roles`, such as HR and Finance users who need both employee self-service access and admin reimbursement access.
+- Line-manager access is a yes/no attribute on `employee_profiles`, not a role in `user_roles`.
 
 ## Enumerations
 
 ```sql
 create type user_status as enum ('active', 'inactive', 'suspended');
 create type identity_provider as enum ('supabase', 'active_directory');
-create type system_role as enum ('employee', 'admin', 'line_manager');
+create type system_role as enum ('employee', 'admin');
 create type reimbursement_category as enum ('medicine', 'optical');
 create type reimbursement_status as enum ('draft', 'pending', 'approved', 'denied', 'declined', 'cancelled');
 create type document_type as enum ('prescription', 'receipt');
@@ -113,6 +115,11 @@ create table roles (
 
 Allows a user to hold one or more roles.
 
+Expected QAT examples:
+- HR users have both `employee` and `admin`.
+- Finance users have both `employee` and `admin`.
+- Line managers still have `employee`; manager status is stored in `employee_profiles.is_line_manager`.
+
 ```sql
 create table user_roles (
   user_id uuid not null references users(user_id),
@@ -134,6 +141,7 @@ create table employee_profiles (
   full_name varchar(200) not null,
   designation varchar(150) not null,
   department_id uuid not null references departments(department_id),
+  is_line_manager boolean not null default false,
   line_manager_employee_profile_id uuid null references employee_profiles(employee_profile_id),
   employment_status user_status not null default 'active',
   created_at timestamptz not null default now(),
@@ -141,6 +149,9 @@ create table employee_profiles (
 );
 
 create index idx_employee_profiles_department on employee_profiles (department_id);
+create index idx_employee_profiles_is_line_manager
+  on employee_profiles (is_line_manager)
+  where is_line_manager = true;
 create index idx_employee_profiles_manager on employee_profiles (line_manager_employee_profile_id);
 ```
 
@@ -476,7 +487,8 @@ from employee_profiles manager
 join employee_profiles employee
   on employee.line_manager_employee_profile_id = manager.employee_profile_id
 join reimbursement_requests rr
-  on rr.employee_profile_id = employee.employee_profile_id;
+  on rr.employee_profile_id = employee.employee_profile_id
+where manager.is_line_manager = true;
 ```
 
 ## Integrity Rules

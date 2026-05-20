@@ -1,14 +1,72 @@
+import { useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Pill, UserCheck } from "lucide-react";
+import { Pill, UserCheck, UserCog } from "lucide-react";
 
 interface LoginScreenProps {
-  onLogin: (role: 'employee' | 'admin') => void;
+  onLogin: (role: 'employee' | 'admin', credentials?: { email: string; password: string }) => Promise<void> | void;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [validationMessage, setValidationMessage] = useState("");
+  const [isEmployeeLoginLoading, setIsEmployeeLoginLoading] = useState(false);
+  const [isAdminLoginLoading, setIsAdminLoginLoading] = useState(false);
+
+  const validateCredentials = () => {
+    const isEmailBlank = email.trim().length === 0;
+    const isPasswordBlank = password.length === 0;
+
+    if (isEmailBlank && isPasswordBlank) {
+      return "Enter your email address and password.";
+    }
+
+    if (isEmailBlank) {
+      return "Enter your email address.";
+    }
+
+    if (isPasswordBlank) {
+      return "Enter your password.";
+    }
+
+    return "";
+  };
+
+  const handleCredentialSubmit = () => {
+    const message = validateCredentials();
+    setValidationMessage(message || "Choose Login as Employee or Login as Admin.");
+  };
+
+  const handleRoleLogin = async (role: 'employee' | 'admin') => {
+    const message = validateCredentials();
+    if (message) {
+      setValidationMessage(message);
+      return;
+    }
+
+    setValidationMessage("");
+    if (role === 'employee') {
+      setIsEmployeeLoginLoading(true);
+    } else {
+      setIsAdminLoginLoading(true);
+    }
+
+    try {
+      await onLogin(role, { email, password });
+    } catch (error) {
+      setValidationMessage(error instanceof Error ? error.message : "Login failed. Please try again.");
+    } finally {
+      if (role === 'employee') {
+        setIsEmployeeLoginLoading(false);
+      } else {
+        setIsAdminLoginLoading(false);
+      }
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5 flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-6">
@@ -31,13 +89,26 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               Enter your credentials to access your account
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent
+            className="space-y-4"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                handleCredentialSubmit();
+              }
+            }}
+          >
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
               <Input 
                 id="email" 
                 type="email" 
                 placeholder="john.doe@company.com"
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  setValidationMessage("");
+                }}
                 className="border-primary/20 focus:border-primary"
               />
             </div>
@@ -47,26 +118,38 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                 id="password" 
                 type="password" 
                 placeholder="Enter your password"
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  setValidationMessage("");
+                }}
                 className="border-primary/20 focus:border-primary"
               />
             </div>
+
+            {validationMessage && (
+              <p className="text-sm text-destructive" role="alert">
+                {validationMessage}
+              </p>
+            )}
             
-            {/* Demo Login Buttons */}
             <div className="space-y-3 pt-4">
-              <Button 
-                onClick={() => onLogin('employee')} 
+              <Button
+                onClick={() => handleRoleLogin('employee')}
+                disabled={isEmployeeLoginLoading}
                 className="w-full bg-primary hover:bg-primary/90"
               >
                 <UserCheck className="mr-2 h-4 w-4" />
-                Login as Employee
+                {isEmployeeLoginLoading ? "Signing in..." : "Login as Employee"}
               </Button>
               <Button 
-                onClick={() => onLogin('admin')} 
+                onClick={() => handleRoleLogin('admin')}
+                disabled={isAdminLoginLoading}
                 variant="outline" 
                 className="w-full border-primary text-primary hover:bg-primary hover:text-primary-foreground"
               >
-                <UserCheck className="mr-2 h-4 w-4" />
-                Login as Admin (Demo)
+                <UserCog className="mr-2 h-4 w-4" />
+                {isAdminLoginLoading ? "Checking admin access..." : "Login as Admin"}
               </Button>
             </div>
 
@@ -79,10 +162,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           </CardContent>
         </Card>
 
-        {/* Footer */}
-        <div className="text-center text-sm text-muted-foreground">
-          <p>Demo System - Click either button to explore the interface</p>
-        </div>
       </div>
     </div>
   );

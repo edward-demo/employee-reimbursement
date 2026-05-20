@@ -55,13 +55,13 @@ as $$
     public.has_role('admin')
     or target_employee_profile_id = public.current_employee_profile_id()
     or (
-      public.has_role('line_manager')
-      and exists (
+      exists (
         select 1
         from public.employee_profiles manager
         join public.employee_profiles employee
           on employee.employee_profile_id = target_employee_profile_id
         where manager.employee_profile_id = public.current_employee_profile_id()
+          and manager.is_line_manager = true
           and (
             employee.line_manager_employee_profile_id = manager.employee_profile_id
             or employee.department_id = manager.department_id
@@ -167,6 +167,53 @@ grant execute on function public.has_role(public.system_role) to authenticated;
 grant execute on function public.can_access_employee_profile(uuid) to authenticated;
 grant execute on function public.can_access_reimbursement_request(uuid) to authenticated;
 grant execute on function public.ensure_current_supabase_user(text) to authenticated;
+
+grant usage on schema public to authenticated;
+
+grant select on
+  public.departments,
+  public.roles,
+  public.users,
+  public.user_identity_links,
+  public.user_roles,
+  public.employee_profiles,
+  public.benefit_plans,
+  public.employee_benefit_enrollments,
+  public.reimbursement_requests,
+  public.reimbursement_request_items,
+  public.reimbursement_documents,
+  public.reimbursement_receipts,
+  public.reimbursement_decisions,
+  public.reimbursement_history,
+  public.notifications
+to authenticated;
+
+grant insert on
+  public.reimbursement_requests,
+  public.reimbursement_request_items,
+  public.reimbursement_documents,
+  public.reimbursement_receipts,
+  public.reimbursement_decisions,
+  public.reimbursement_history,
+  public.notifications
+to authenticated;
+
+grant update on
+  public.users,
+  public.user_identity_links,
+  public.user_roles,
+  public.employee_profiles,
+  public.employee_benefit_enrollments,
+  public.reimbursement_requests,
+  public.notifications
+to authenticated;
+
+grant delete on
+  public.user_identity_links,
+  public.user_roles,
+  public.employee_profiles,
+  public.employee_benefit_enrollments
+to authenticated;
 
 alter table public.departments enable row level security;
 alter table public.users enable row level security;
@@ -288,11 +335,27 @@ on public.reimbursement_requests for update
 to authenticated
 using (
   public.has_role('admin')
-  or (public.has_role('line_manager') and public.can_access_employee_profile(employee_profile_id))
+  or (
+    exists (
+      select 1
+      from public.employee_profiles manager
+      where manager.employee_profile_id = public.current_employee_profile_id()
+        and manager.is_line_manager = true
+    )
+    and public.can_access_employee_profile(employee_profile_id)
+  )
 )
 with check (
   public.has_role('admin')
-  or (public.has_role('line_manager') and public.can_access_employee_profile(employee_profile_id))
+  or (
+    exists (
+      select 1
+      from public.employee_profiles manager
+      where manager.employee_profile_id = public.current_employee_profile_id()
+        and manager.is_line_manager = true
+    )
+    and public.can_access_employee_profile(employee_profile_id)
+  )
 );
 
 drop policy if exists "Users can read accessible request items" on public.reimbursement_request_items;
@@ -371,7 +434,12 @@ with check (
   and public.can_access_reimbursement_request(reimbursement_request_id)
   and (
     public.has_role('admin')
-    or public.has_role('line_manager')
+    or exists (
+      select 1
+      from public.employee_profiles manager
+      where manager.employee_profile_id = public.current_employee_profile_id()
+        and manager.is_line_manager = true
+    )
   )
 );
 
@@ -465,4 +533,11 @@ from public.employee_profiles manager
 join public.employee_profiles employee
   on employee.line_manager_employee_profile_id = manager.employee_profile_id
 join public.reimbursement_requests rr
-  on rr.employee_profile_id = employee.employee_profile_id;
+  on rr.employee_profile_id = employee.employee_profile_id
+where manager.is_line_manager = true;
+
+grant select on
+  public.employee_benefit_usage,
+  public.admin_department_reimbursement_summary,
+  public.line_manager_queue
+to authenticated;

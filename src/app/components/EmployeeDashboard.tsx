@@ -24,24 +24,44 @@ interface EmployeeDashboardProps {
   onLogout: () => void;
   onNewRequest: () => void;
   onNewOpticalRequest: () => void;
+  dashboardData?: EmployeeDashboardData;
 }
 
-export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest }: EmployeeDashboardProps) {
-  const [activeTab, setActiveTab] = useState("overview");
-  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+export interface EmployeeDashboardData {
+  employee: {
+    name: string;
+    id: string;
+    designation: string;
+    department: string;
+    email: string;
+    medicineLimit: number;
+    opticalLimit: number;
+    medicineApprovedAmount?: number;
+    opticalApprovedAmount?: number;
+  };
+  reimbursementRequests: Array<{
+    id: string;
+    medicineName: string;
+    quantity: string;
+    totalPrice: number;
+    submittedDate: string;
+    status: string;
+    category: "medicine" | "optical";
+    remarks: string;
+  }>;
+}
 
-  // Mock data
-  const employee = {
+const mockEmployeeDashboardData: EmployeeDashboardData = {
+  employee: {
     name: "Jose Rizal",
     id: "EMP-2024-001",
     designation: "Software Engineer",
     department: "Product Development",
     email: "jose.rizal@company.com",
-    medicineLimit: 10000.00, // Annual medicine reimbursement limit
-    opticalLimit: 5000.00 // Annual optical reimbursement limit
-  };
-
-  const reimbursementRequests = [
+    medicineLimit: 10000.00,
+    opticalLimit: 5000.00
+  },
+  reimbursementRequests: [
     {
       id: "REQ-001",
       medicineName: "Paracetamol 500mg",
@@ -82,19 +102,31 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest 
       category: "optical",
       remarks: "Approved by HR. Payment processed."
     }
-  ];
+  ]
+};
+
+export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest, dashboardData }: EmployeeDashboardProps) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const { employee, reimbursementRequests } = dashboardData ?? mockEmployeeDashboardData;
 
   // Calculate totals by category
-  const medicineApprovedAmount = reimbursementRequests
+  const medicineApprovedAmount = employee.medicineApprovedAmount ?? reimbursementRequests
     .filter(req => req.status === 'approved' && req.category === 'medicine')
     .reduce((sum, req) => sum + req.totalPrice, 0);
 
-  const opticalApprovedAmount = reimbursementRequests
+  const opticalApprovedAmount = employee.opticalApprovedAmount ?? reimbursementRequests
     .filter(req => req.status === 'approved' && req.category === 'optical')
     .reduce((sum, req) => sum + req.totalPrice, 0);
 
   const medicineRemainingBalance = employee.medicineLimit - medicineApprovedAmount;
   const opticalRemainingBalance = employee.opticalLimit - opticalApprovedAmount;
+  const medicineUsagePercent = employee.medicineLimit > 0
+    ? Math.min((medicineApprovedAmount / employee.medicineLimit) * 100, 100)
+    : 0;
+  const opticalUsagePercent = employee.opticalLimit > 0
+    ? Math.min((opticalApprovedAmount / employee.opticalLimit) * 100, 100)
+    : 0;
 
   const pendingRequests = reimbursementRequests.filter(req => req.status === 'pending');
   const oldestPendingRequest = pendingRequests.length > 0
@@ -202,7 +234,7 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest 
                       <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-primary transition-all"
-                          style={{ width: `${(medicineApprovedAmount / employee.medicineLimit) * 100}%` }}
+                          style={{ width: `${medicineUsagePercent}%` }}
                         ></div>
                       </div>
                     </div>
@@ -217,7 +249,7 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest 
                       <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-secondary transition-all"
-                          style={{ width: `${(opticalApprovedAmount / employee.opticalLimit) * 100}%` }}
+                          style={{ width: `${opticalUsagePercent}%` }}
                         ></div>
                       </div>
                     </div>
@@ -269,6 +301,9 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest 
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
+                  {reimbursementRequests.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No reimbursement requests yet.</p>
+                  )}
                   {reimbursementRequests.slice(0, 2).map((request) => (
                     <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg">
                       <div className="flex-1">
@@ -335,6 +370,13 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest 
             </div>
 
             <div className="space-y-4">
+              {reimbursementRequests.length === 0 && (
+                <Card className="border-2 border-primary/10">
+                  <CardContent className="p-6">
+                    <p className="text-sm text-muted-foreground">No reimbursement requests yet.</p>
+                  </CardContent>
+                </Card>
+              )}
               {reimbursementRequests.map((request) => (
                 <Card key={request.id} className="border-2 border-primary/10">
                   <CardContent className="p-6">

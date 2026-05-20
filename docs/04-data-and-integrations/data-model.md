@@ -14,6 +14,9 @@ Define the core business objects needed to support the current reimbursement use
 ### External Authentication, Internal Authorization
 QAT authentication will use Supabase Auth. The later internal-site version will authenticate through Windows Active Directory. The application data model keeps an internal `users` record for authorization, ownership, audit, and notifications, then links that user to the current authentication provider through `user_identity_links`. This prevents reimbursement, decision, and audit records from depending directly on Supabase-specific or Active Directory-specific identifiers.
 
+### Additive Roles
+Roles are additive, not exclusive. A user can hold `employee` and `admin` permissions at the same time through `user_roles`. HR and Finance users are expected to keep employee self-service access while also holding admin access for reimbursement operations. Line-manager status is not a role; it is a yes/no attribute on `employee_profiles`.
+
 ### Unified Request Model
 Medicine and optical claims share the same lifecycle, document requirements, line-item structure, balance behavior, and review surfaces. The data model uses one `reimbursement_requests` entity with a `category` field instead of separate medicine and optical request tables.
 
@@ -35,7 +38,7 @@ Admin and line-manager decisions are modeled as `reimbursement_decisions` record
 | --- | --- | --- |
 | `users` | Internal application user used for authorization, ownership, audit, and notifications. | Belongs to one `employee_profile` when the user is an employee. |
 | `user_identity_links` | Mapping between an internal user and an external identity provider account. | Belongs to one user and one provider subject. |
-| `roles` | Role definitions such as Employee, Admin, and Line Manager. | Assigned to users through `user_roles`. |
+| `roles` | Role definitions such as Employee and Admin. | Assigned to users through `user_roles`. |
 | `departments` | Supported organization departments. | Has many employee profiles and report aggregates. |
 | `employee_profiles` | Employment data used for dashboards, scope, and claims. | Belongs to a department and may report to a line manager. |
 | `benefit_plans` | Annual benefit limits by category. | Assigned through `employee_benefit_enrollments`. |
@@ -120,12 +123,16 @@ Rules supported:
 - NFR-009
 
 ### Role
-Defines portal and permission groups.
+Defines portal and permission groups. Roles are assigned through `user_roles`, allowing one user to have more than one permission set.
 
 Initial values:
 - `employee`
 - `admin`
-- `line_manager`
+
+Expected multi-role examples:
+- HR users: `employee` and `admin`
+- Finance users: `employee` and `admin`
+- Line managers: `employee`, with `employee_profiles.is_line_manager = true`; `admin` is added only when separately authorized
 
 Rules supported:
 - ACL-001 through ACL-006
@@ -155,6 +162,7 @@ Key attributes:
 - `full_name`
 - `designation`
 - `department_id`
+- `is_line_manager`
 - `line_manager_employee_profile_id`
 - `employment_status`
 

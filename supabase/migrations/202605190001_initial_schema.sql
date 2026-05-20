@@ -14,7 +14,7 @@ exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create type public.system_role as enum ('employee', 'admin', 'line_manager');
+  create type public.system_role as enum ('employee', 'admin');
 exception when duplicate_object then null;
 end $$;
 
@@ -118,6 +118,7 @@ create table if not exists public.employee_profiles (
   full_name varchar(200) not null,
   designation varchar(150) not null,
   department_id uuid not null references public.departments(department_id),
+  is_line_manager boolean not null default false,
   line_manager_employee_profile_id uuid null references public.employee_profiles(employee_profile_id),
   employment_status public.user_status not null default 'active',
   created_at timestamptz not null default now(),
@@ -126,6 +127,10 @@ create table if not exists public.employee_profiles (
 
 create index if not exists idx_employee_profiles_department
   on public.employee_profiles (department_id);
+
+create index if not exists idx_employee_profiles_is_line_manager
+  on public.employee_profiles (is_line_manager)
+  where is_line_manager = true;
 
 create index if not exists idx_employee_profiles_manager
   on public.employee_profiles (line_manager_employee_profile_id);
@@ -350,8 +355,7 @@ on conflict (name) do nothing;
 insert into public.roles (code, display_name)
 values
   ('employee', 'Employee'),
-  ('admin', 'Admin'),
-  ('line_manager', 'Line Manager')
+  ('admin', 'Admin')
 on conflict (code) do update set display_name = excluded.display_name;
 
 insert into public.benefit_plans (category, display_name, annual_limit, effective_from)

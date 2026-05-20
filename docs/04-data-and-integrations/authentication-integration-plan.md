@@ -10,7 +10,7 @@ QAT authentication will use Supabase Auth. Supabase is responsible for credentia
 
 The reimbursement application remains responsible for:
 - Mapping the Supabase authenticated user to an internal `users` record.
-- Loading assigned application roles.
+- Loading assigned application roles and the line-manager yes/no attribute.
 - Applying employee ownership, admin access, and line-manager scope.
 - Writing audit events against the internal user ID.
 
@@ -52,6 +52,7 @@ Authorization should continue to come from application data:
 - `roles`
 - `user_roles`
 - `employee_profiles`
+- `employee_profiles.is_line_manager`
 - `departments`
 - `line_manager_employee_profile_id`
 
