@@ -178,7 +178,7 @@ create table if not exists public.reimbursement_requests (
   pwd_deduction_amount numeric(12,2) not null default 0 check (pwd_deduction_amount >= 0),
   claim_amount numeric(12,2) not null check (claim_amount > 0),
   notes text null,
-  current_review_stage public.review_stage null,
+  current_review_stage public.review_stage not null default 'line_manager',
   final_decided_at timestamptz null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -193,6 +193,9 @@ create index if not exists idx_reimbursement_requests_status
 
 create index if not exists idx_reimbursement_requests_category_status
   on public.reimbursement_requests (category, status);
+
+create index if not exists idx_reimbursement_requests_review_stage
+  on public.reimbursement_requests (status, current_review_stage, submitted_at desc);
 
 create table if not exists public.reimbursement_request_items (
   reimbursement_request_item_id uuid primary key default gen_random_uuid(),

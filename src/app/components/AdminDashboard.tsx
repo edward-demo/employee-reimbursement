@@ -36,6 +36,7 @@ import {
   Building2,
   FilterX
 } from "lucide-react";
+import { Avatar, AvatarFallback } from "./ui/avatar";
 
 interface AdminDashboardProps {
   onLogout: () => void;
@@ -52,8 +53,16 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [isDenyDialogOpen, setIsDenyDialogOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ type: 'prescription' | 'receipt', name: string, index?: number } | null>(null);
 
+  const admin = {
+    name: "Patricia Gonzales",
+    id: "EMP-2022-008",
+    email: "patricia.gonzales@company.com",
+    designation: "HR Manager",
+    department: "HR Department",
+  };
+
   // Mock data with detailed information
-  const pendingRequests = [
+  const stagedPendingRequests = [
     {
       id: "REQ-004",
       employeeName: "Maria Santos",
@@ -61,7 +70,9 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       department: "Product Development",
       submittedDate: "2024-01-18",
       status: "pending",
+      currentReviewStage: "hr_admin_review",
       category: "medicine",
+      lineManagerName: "Roberto Cruz",
       prescription: { name: "prescription-004.pdf" },
       medicines: [
         { id: "1", name: "Blood Pressure Medication", quantity: "30", unitPrice: "25.00", subtotal: 750.00 },
@@ -87,7 +98,9 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       department: "Finance",
       submittedDate: "2024-01-17",
       status: "pending",
+      currentReviewStage: "line_manager_review",
       category: "medicine",
+      lineManagerName: "Jennifer Lee",
       prescription: { name: "prescription-005.pdf" },
       medicines: [
         { id: "1", name: "Insulin Injections", quantity: "10", unitPrice: "250.00", subtotal: 2500.00 },
@@ -117,7 +130,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   ];
 
   const allRequests = [
-    ...pendingRequests,
+    ...stagedPendingRequests,
     {
       id: "REQ-001",
       employeeName: "Juan dela Cruz",
@@ -263,14 +276,20 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   ];
 
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, currentReviewStage?: string) => {
     switch (status) {
       case 'approved':
         return <Badge className="bg-green-100 text-green-800 border-green-200">
           <CheckCircle className="w-3 h-3 mr-1" />
-          Approved
+          Approved by HR
         </Badge>;
       case 'pending':
+        if (currentReviewStage === "hr_admin_review") {
+          return <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Approved by LM • Pending HR Review
+          </Badge>;
+        }
         return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
           <Clock className="w-3 h-3 mr-1" />
           Pending
@@ -283,6 +302,15 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       default:
         return null;
     }
+  };
+
+  const getInitials = (name: string) => {
+    return name
+      .split(" ")
+      .map((word) => word[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
   };
 
   const handleApprove = (requestId: string) => {
@@ -326,7 +354,11 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   const filteredRequests = allRequests.filter(request => {
-    const statusMatch = filterStatus === "all" || request.status === filterStatus;
+    const statusMatch =
+      filterStatus === "all" ||
+      (filterStatus === "pending_line_manager" && request.status === "pending" && request.currentReviewStage === "line_manager_review") ||
+      (filterStatus === "pending_admin" && request.status === "pending" && request.currentReviewStage === "hr_admin_review") ||
+      request.status === filterStatus;
     const departmentMatch = filterDepartment === "all" || request.department === filterDepartment;
     return statusMatch && departmentMatch;
   });
@@ -340,21 +372,27 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   // Department statistics for charts (Medicine)
   const departmentStatsMedicine = [
-    { department: "Product Development", approvedCount: 5, totalAmount: 8950, color: "#6E0F86" },
-    { department: "Finance", approvedCount: 4, totalAmount: 7500, color: "#F165E3" },
-    { department: "HR", approvedCount: 3, totalAmount: 5800, color: "#E1B3CE" },
+    { department: "Product Development", approvedCount: 5, totalAmount: 8950, color: "#0B8BCB" },
+    { department: "Finance", approvedCount: 4, totalAmount: 7500, color: "#62C3F3" },
+    { department: "HR", approvedCount: 3, totalAmount: 5800, color: "#B4D3E2" },
     { department: "Admin", approvedCount: 3, totalAmount: 6400, color: "#9333EA" },
     { department: "IT Helpdesk", approvedCount: 2, totalAmount: 3550, color: "#C084FC" },
   ];
 
   // Department statistics for charts (Optical)
   const departmentStatsOptical = [
-    { department: "Product Development", approvedCount: 3, totalAmount: 9500, color: "#6E0F86" },
-    { department: "Finance", approvedCount: 2, totalAmount: 7730, color: "#F165E3" },
-    { department: "HR", approvedCount: 2, totalAmount: 7000, color: "#E1B3CE" },
+    { department: "Product Development", approvedCount: 3, totalAmount: 9500, color: "#0B8BCB" },
+    { department: "Finance", approvedCount: 2, totalAmount: 7730, color: "#62C3F3" },
+    { department: "HR", approvedCount: 2, totalAmount: 7000, color: "#B4D3E2" },
     { department: "Admin", approvedCount: 1, totalAmount: 2500, color: "#9333EA" },
     { department: "IT Helpdesk", approvedCount: 1, totalAmount: 3000, color: "#C084FC" },
   ];
+
+  const departmentStatsCombined = departmentStatsMedicine.map((medDept, index) => ({
+    department: medDept.department,
+    medicine: medDept.totalAmount,
+    optical: departmentStatsOptical[index].totalAmount
+  }));
 
   // Calculate totals for overview
   const medicineApproved = allRequests.filter(r => r.status === 'approved' && r.category === 'medicine').length;
@@ -384,16 +422,21 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-primary">MedReimburse Admin</h1>
-                <p className="text-sm text-muted-foreground">HR & Finance Portal</p>
+                <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>HR & Finance Portal</p>
               </div>
             </div>
             
             <div className="flex items-center space-x-4">
+              <Avatar>
+                <AvatarFallback className="bg-primary text-primary-foreground">
+                  {getInitials(admin.name)}
+                </AvatarFallback>
+              </Avatar>
               <div className="text-right">
-                <p className="font-medium">Admin User</p>
-                <p className="text-sm text-muted-foreground">HR Department</p>
+                <p className="font-medium">{admin.name}</p>
+                <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>{admin.designation}</p>
               </div>
-              <Button onClick={onLogout} variant="outline" size="sm">
+              <Button onClick={onLogout} variant="outline" size="sm" style={{ borderColor: 'rgba(0, 0, 0, 0.4)', borderWidth: '1.5px', color: 'rgba(0, 0, 0, 0.8)' }}>
                 <LogOut className="h-4 w-4 mr-2" />
                 Logout
               </Button>
@@ -405,24 +448,27 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 bg-white border-2 border-primary/10">
-            <TabsTrigger value="overview" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+          <TabsList className="grid w-full grid-cols-4 bg-white">
+            <TabsTrigger value="overview" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground hover:text-primary">
               Overview
             </TabsTrigger>
-            <TabsTrigger value="requests" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              Requests ({pendingRequests.length})
+            <TabsTrigger value="requests" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground hover:text-primary">
+              Requests ({stagedPendingRequests.length})
             </TabsTrigger>
-            <TabsTrigger value="reports" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger value="reports" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground hover:text-primary">
               Reports
+            </TabsTrigger>
+            <TabsTrigger value="profile" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground hover:text-primary">
+              Profile
             </TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-6">
+          <TabsContent value="overview" className="space-y-6 data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:slide-in-from-right-8 data-[state=active]:duration-200">
             {/* Stats Cards */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Reimbursement Overview Card */}
-              <Card className="border-2 border-primary/20">
+              <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center">
                     <BarChart3 className="h-5 w-5 mr-2 text-primary" />
@@ -431,82 +477,87 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <CardDescription>Current month statistics by category</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* Medicine and Optical Sections Side by Side */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Medicine Section */}
-                    <div className="space-y-3">
-                      <h4 className="font-semibold text-center text-primary">Medicine</h4>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="text-center p-3 bg-green-50 border-2 border-green-200 rounded-lg">
-                          <CheckCircle className="h-4 w-4 mx-auto mb-1 text-green-600" />
-                          <div className="text-xl font-bold text-green-600">{medicineApproved}</div>
-                          <p className="text-xs text-muted-foreground mt-1">Approved</p>
-                        </div>
-                        <div className="text-center p-3 bg-yellow-50 border-2 border-yellow-200 rounded-lg">
-                          <Clock className="h-4 w-4 mx-auto mb-1 text-yellow-600" />
-                          <div className="text-xl font-bold text-yellow-600">{medicinePending}</div>
-                          <p className="text-xs text-muted-foreground mt-1">Pending</p>
-                        </div>
-                        <div className="text-center p-3 bg-red-50 border-2 border-red-200 rounded-lg">
-                          <XCircle className="h-4 w-4 mx-auto mb-1 text-red-600" />
-                          <div className="text-xl font-bold text-red-600">{medicineDenied}</div>
-                          <p className="text-xs text-muted-foreground mt-1">Denied</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Optical Section */}
-                    <div className="space-y-3">
-                      <h4 className="font-semibold text-center text-secondary">Optical</h4>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="text-center p-3 bg-green-50 border-2 border-green-200 rounded-lg">
-                          <CheckCircle className="h-4 w-4 mx-auto mb-1 text-green-600" />
-                          <div className="text-xl font-bold text-green-600">{opticalApproved}</div>
-                          <p className="text-xs text-muted-foreground mt-1">Approved</p>
-                        </div>
-                        <div className="text-center p-3 bg-yellow-50 border-2 border-yellow-200 rounded-lg">
-                          <Clock className="h-4 w-4 mx-auto mb-1 text-yellow-600" />
-                          <div className="text-xl font-bold text-yellow-600">{opticalPending}</div>
-                          <p className="text-xs text-muted-foreground mt-1">Pending</p>
-                        </div>
-                        <div className="text-center p-3 bg-red-50 border-2 border-red-200 rounded-lg">
-                          <XCircle className="h-4 w-4 mx-auto mb-1 text-red-600" />
-                          <div className="text-xl font-bold text-red-600">{opticalDenied}</div>
-                          <p className="text-xs text-muted-foreground mt-1">Denied</p>
-                        </div>
-                      </div>
-                    </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="border-b-2">
+                          <th className="text-left py-3 px-4 text-sm font-semibold text-muted-foreground"></th>
+                          <th className="text-center py-3 px-4 text-sm font-semibold text-primary">Medicine</th>
+                          <th className="text-center py-3 px-4 text-sm font-semibold text-secondary border-l-2 border-gray-200">Optical</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b hover:bg-green-50/30">
+                          <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
+                            <div className="flex items-center space-x-2">
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                              <span>Approved</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            <div className="text-2xl font-bold text-green-600">{medicineApproved}</div>
+                          </td>
+                          <td className="py-4 px-4 text-center border-l-2 border-gray-200">
+                            <div className="text-2xl font-bold text-green-600">{opticalApproved}</div>
+                          </td>
+                        </tr>
+                        <tr className="border-b hover:bg-yellow-50/30">
+                          <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
+                            <div className="flex items-center space-x-2">
+                              <Clock className="h-4 w-4 text-yellow-600" />
+                              <span>Pending</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            <div className="text-2xl font-bold text-yellow-600">{medicinePending}</div>
+                          </td>
+                          <td className="py-4 px-4 text-center border-l-2 border-gray-200">
+                            <div className="text-2xl font-bold text-yellow-600">{opticalPending}</div>
+                          </td>
+                        </tr>
+                        <tr className="hover:bg-red-50/30">
+                          <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
+                            <div className="flex items-center space-x-2">
+                              <XCircle className="h-4 w-4 text-red-600" />
+                              <span>Denied</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            <div className="text-2xl font-bold text-red-600">{medicineDenied}</div>
+                          </td>
+                          <td className="py-4 px-4 text-center border-l-2 border-gray-200">
+                            <div className="text-2xl font-bold text-red-600">{opticalDenied}</div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
 
                   <Separator />
 
                   {/* Total Reimbursed by Category */}
-                  <div className="p-4 bg-primary/5 border-2 border-primary/20 rounded-lg space-y-3">
-                    <p className="text-sm text-muted-foreground text-center">Total Reimbursed This Month</p>
+                  <div className="p-4 bg-primary/5 rounded-lg space-y-3">
+                    <p className="text-sm text-center" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Total Reimbursed This Month</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="text-center">
-                        <p className="text-xs text-muted-foreground mb-1">Medicine</p>
+                        <p className="text-xs mb-1" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Medicine</p>
                         <div className="flex items-center justify-center space-x-1">
                           <span className="text-2xl font-bold text-primary">₱{totalMedicineReimbursed.toLocaleString()}</span>
                         </div>
                       </div>
                       <div className="text-center">
-                        <p className="text-xs text-muted-foreground mb-1">Optical</p>
+                        <p className="text-xs mb-1" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Optical</p>
                         <div className="flex items-center justify-center space-x-1">
                           <span className="text-2xl font-bold text-secondary">₱{totalOpticalReimbursed.toLocaleString()}</span>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center justify-center space-x-1 pt-2 border-t">
-                      <ArrowUpRight className="h-4 w-4 text-green-600" />
-                      <span className="text-sm font-medium text-green-600">+12% from last month</span>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
               {/* Department Breakdown Card */}
-              <Card className="border-2 border-secondary/20">
+              <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center">
                     <Building2 className="h-5 w-5 mr-2 text-secondary" />
@@ -514,87 +565,54 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </CardTitle>
                   <CardDescription>Approved reimbursements by department and category</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Medicine Chart */}
-                  <div>
-                    <h4 className="font-semibold text-primary mb-3">Medicine</h4>
-                    <div className="h-[280px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={departmentStatsMedicine}>
-                          <CartesianGrid key="grid-medicine" strokeDasharray="3 3" stroke="#E1B3CE" opacity={0.3} />
-                          <XAxis
-                            key="xaxis-medicine"
-                            dataKey="department"
-                            tick={{ fill: '#6E0F86', fontSize: 10 }}
-                            angle={-15}
-                            textAnchor="end"
-                            height={60}
-                          />
-                          <YAxis
-                            key="yaxis-medicine"
-                            tick={{ fill: '#6E0F86', fontSize: 12 }}
-                            label={{ value: 'Amount (₱)', angle: -90, position: 'insideLeft', fill: '#6E0F86' }}
-                          />
-                          <RechartsTooltip
-                            key="tooltip-medicine"
-                            contentStyle={{
-                              backgroundColor: 'white',
-                              border: '2px solid #E1B3CE',
-                              borderRadius: '8px'
-                            }}
-                            formatter={(value: any) => [`₱${value.toLocaleString()}`, 'Total Amount']}
-                          />
-                          <Bar
-                            key="bar-medicine"
-                            dataKey="totalAmount"
-                            fill="#6E0F86"
-                            radius={[8, 8, 0, 0]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  {/* Optical Chart */}
-                  <div>
-                    <h4 className="font-semibold text-secondary mb-3">Optical</h4>
-                    <div className="h-[280px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={departmentStatsOptical}>
-                          <CartesianGrid key="grid-optical" strokeDasharray="3 3" stroke="#E1B3CE" opacity={0.3} />
-                          <XAxis
-                            key="xaxis-optical"
-                            dataKey="department"
-                            tick={{ fill: '#F165E3', fontSize: 10 }}
-                            angle={-15}
-                            textAnchor="end"
-                            height={60}
-                          />
-                          <YAxis
-                            key="yaxis-optical"
-                            tick={{ fill: '#F165E3', fontSize: 12 }}
-                            label={{ value: 'Amount (₱)', angle: -90, position: 'insideLeft', fill: '#F165E3' }}
-                          />
-                          <RechartsTooltip
-                            key="tooltip-optical"
-                            contentStyle={{
-                              backgroundColor: 'white',
-                              border: '2px solid #E1B3CE',
-                              borderRadius: '8px'
-                            }}
-                            formatter={(value: any) => [`₱${value.toLocaleString()}`, 'Total Amount']}
-                          />
-                          <Bar
-                            key="bar-optical"
-                            dataKey="totalAmount"
-                            fill="#F165E3"
-                            radius={[8, 8, 0, 0]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                <CardContent>
+                  <div className="h-[350px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={departmentStatsCombined}>
+                        <CartesianGrid key="grid-combined" strokeDasharray="3 3" stroke="#B4D3E2" opacity={0.3} />
+                        <XAxis
+                          key="xaxis-combined"
+                          dataKey="department"
+                          tick={{ fill: '#0B8BCB', fontSize: 10 }}
+                          angle={-15}
+                          textAnchor="end"
+                          height={70}
+                        />
+                        <YAxis
+                          key="yaxis-combined"
+                          tick={{ fill: '#0B8BCB', fontSize: 12 }}
+                          label={{ value: 'Amount (₱)', angle: -90, position: 'insideLeft', fill: '#0B8BCB' }}
+                        />
+                        <RechartsTooltip
+                          key="tooltip-combined"
+                          contentStyle={{
+                            backgroundColor: 'white',
+                            border: '2px solid #B4D3E2',
+                            borderRadius: '8px'
+                          }}
+                          formatter={(value: any) => [`₱${value.toLocaleString()}`]}
+                        />
+                        <Legend
+                          key="legend-combined"
+                          wrapperStyle={{ paddingTop: '20px' }}
+                          iconType="rect"
+                        />
+                        <Bar
+                          key="bar-medicine"
+                          dataKey="medicine"
+                          name="Medicine"
+                          fill="#0B8BCB"
+                          radius={[8, 8, 0, 0]}
+                        />
+                        <Bar
+                          key="bar-optical"
+                          dataKey="optical"
+                          name="Optical"
+                          fill="#62C3F3"
+                          radius={[8, 8, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 </CardContent>
               </Card>
@@ -608,17 +626,17 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {pendingRequests.map((request) => (
+                  {stagedPendingRequests.map((request) => (
                     <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg bg-yellow-50 border-yellow-200">
                       <div className="flex-1">
                         <h4 className="font-medium">{request.employeeName}</h4>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>
                           {request.medicines.length} medicine{request.medicines.length !== 1 ? 's' : ''} • ₱{request.totalPrice} • {request.submittedDate}
                         </p>
                       </div>
                       <div className="flex items-center space-x-2">
-                        {getStatusBadge(request.status)}
-                        <Button size="sm" variant="outline" onClick={() => setActiveTab("requests")}>
+                        {getStatusBadge(request.status, request.currentReviewStage)}
+                        <Button size="sm" variant="outline" onClick={() => setActiveTab("requests")} style={{ borderColor: 'rgba(0, 0, 0, 0.4)', borderWidth: '1.5px', color: 'rgba(0, 0, 0, 0.8)' }}>
                           Review
                         </Button>
                       </div>
@@ -644,7 +662,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="pending_line_manager">Pending LM Review</SelectItem>
+                    <SelectItem value="pending_admin">Approved by LM / Pending HR Review</SelectItem>
                     <SelectItem value="approved">Approved</SelectItem>
                     <SelectItem value="denied">Denied</SelectItem>
                   </SelectContent>
@@ -722,7 +741,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                           {request.employeeId} • {request.department}
                         </p>
                       </div>
-                      {getStatusBadge(request.status)}
+                        {getStatusBadge(request.status, request.currentReviewStage)}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
@@ -764,7 +783,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         View Full Details
                       </Button>
 
-                      {request.status === 'pending' && (
+                      {request.status === 'pending' && request.currentReviewStage === 'hr_admin_review' && (
                         <div className="flex items-center space-x-2">
                           <Button
                             variant="outline"
@@ -1000,7 +1019,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       )}
 
                       {/* Action Buttons */}
-                      {selectedRequest.status === 'pending' && (
+                      {selectedRequest.status === 'pending' && selectedRequest.currentReviewStage === 'hr_admin_review' && (
                         <div className="flex justify-end space-x-3 pt-4">
                           <Button
                             variant="outline"
@@ -1201,10 +1220,10 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </TabsContent>
 
           {/* Reports Tab */}
-          <TabsContent value="reports" className="space-y-6">
+          <TabsContent value="reports" className="space-y-6 data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:slide-in-from-right-8 data-[state=active]:duration-200">
             <div>
               <h2 className="text-2xl font-bold">Reports & Analytics</h2>
-              <p className="text-muted-foreground">Generate reports and view system analytics</p>
+              <p style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Generate reports and view system analytics</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1284,6 +1303,40 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          {/* Profile Tab */}
+          <TabsContent value="profile" className="space-y-6 data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:slide-in-from-right-8 data-[state=active]:duration-200">
+            <Card>
+              <CardHeader>
+                <CardTitle>Admin Profile</CardTitle>
+                <CardDescription>Manage your personal information</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Full Name</Label>
+                    <p className="font-medium">{admin.name}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Employee ID</Label>
+                    <p className="font-medium">{admin.id}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Designation</Label>
+                    <p className="font-medium">{admin.designation}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Department</Label>
+                    <p className="font-medium">{admin.department}</p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Email Address</Label>
+                    <p className="font-medium">{admin.email}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </main>
