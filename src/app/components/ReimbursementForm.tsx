@@ -42,6 +42,9 @@ interface ReimbursementFormProps {
   onSubmit: () => void;
 }
 
+const MAX_UPLOAD_FILE_SIZE_BYTES = 1024 * 1024;
+const MAX_UPLOAD_FILE_SIZE_LABEL = "1MB";
+
 export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) {
   const [medicines, setMedicines] = useState<Medicine[]>([
     { id: '1', name: '', quantity: '', unitPrice: '', subtotal: 0 }
@@ -51,6 +54,7 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
   const [prescriptionFiles, setPrescriptionFiles] = useState<File[]>([]);
   const [receipts, setReceipts] = useState<ReceiptFile[]>([]);
   const [isConfirmed, setIsConfirmed] = useState(false);
+  const [uploadError, setUploadError] = useState("");
 
   const addMedicine = () => {
     const newMedicine: Medicine = {
@@ -92,7 +96,16 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
   };
 
   const handlePrescriptionUpload = (files: File[]) => {
-    const combinedFiles = [...prescriptionFiles, ...files];
+    const validFiles = files.filter(file => file.size <= MAX_UPLOAD_FILE_SIZE_BYTES);
+    const rejectedFiles = files.filter(file => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
+
+    if (rejectedFiles.length > 0) {
+      setUploadError(`${rejectedFiles.map(file => file.name).join(', ')} exceed${rejectedFiles.length === 1 ? 's' : ''} the ${MAX_UPLOAD_FILE_SIZE_LABEL} limit per file.`);
+    } else {
+      setUploadError("");
+    }
+
+    const combinedFiles = [...prescriptionFiles, ...validFiles];
     if (combinedFiles.length <= 3) {
       setPrescriptionFiles(combinedFiles);
     } else {
@@ -104,14 +117,23 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
     setPrescriptionFiles(prescriptionFiles.filter((_, i) => i !== index));
   };
 
-  const handleReceiptUpload = (file: File) => {
-    const newReceipt: ReceiptFile = {
+  const handleReceiptUpload = (files: File[]) => {
+    const validFiles = files.filter(file => file.size <= MAX_UPLOAD_FILE_SIZE_BYTES);
+    const rejectedFiles = files.filter(file => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
+
+    if (rejectedFiles.length > 0) {
+      setUploadError(`${rejectedFiles.map(file => file.name).join(', ')} exceed${rejectedFiles.length === 1 ? 's' : ''} the ${MAX_UPLOAD_FILE_SIZE_LABEL} limit per file.`);
+    } else {
+      setUploadError("");
+    }
+
+    const newReceipts = validFiles.map((file) => ({
       id: Date.now().toString() + Math.random(),
-      file: file,
+      file,
       invoiceNumber: '',
       isEditingInvoice: false
-    };
-    setReceipts([...receipts, newReceipt]);
+    }));
+    setReceipts([...receipts, ...newReceipts]);
   };
 
   const removeReceipt = (id: string) => {
@@ -167,6 +189,13 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {uploadError && (
+                <div className="flex items-start space-x-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <p>{uploadError}</p>
+                </div>
+              )}
+
               {/* Prescription Upload */}
               <div className="space-y-2">
                 <Label className="flex items-center opacity-72">
@@ -205,7 +234,7 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
                         Click to upload or drag and drop
                       </p>
                       <p className="text-xs text-muted-foreground opacity-72">
-                        PDF, PNG, JPG up to 10MB • {3 - prescriptionFiles.length} file{3 - prescriptionFiles.length !== 1 ? 's' : ''} remaining
+                        PDF, PNG, JPG up to {MAX_UPLOAD_FILE_SIZE_LABEL} each • {3 - prescriptionFiles.length} file{3 - prescriptionFiles.length !== 1 ? 's' : ''} remaining
                       </p>
                       <input
                         type="file"
@@ -313,7 +342,7 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
                       Click to upload or drag and drop
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      PDF, PNG, JPG up to 10MB each • Multiple files allowed
+                      PDF, PNG, JPG up to {MAX_UPLOAD_FILE_SIZE_LABEL} each • Multiple files allowed
                     </p>
                     <input
                       type="file"
@@ -323,7 +352,7 @@ export function ReimbursementForm({ onBack, onSubmit }: ReimbursementFormProps) 
                       multiple
                       onChange={(e) => {
                         const filesArray = Array.from(e.target.files || []);
-                        filesArray.forEach(file => handleReceiptUpload(file));
+                        handleReceiptUpload(filesArray);
                         e.target.value = '';
                       }}
                     />

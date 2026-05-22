@@ -5,8 +5,10 @@ import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Pill, UserCheck, UserCog } from "lucide-react";
 
+type LoginRole = 'employee' | 'admin';
+
 interface LoginScreenProps {
-  onLogin: (role: 'employee' | 'admin', credentials?: { email: string; password: string }) => Promise<void> | void;
+  onLogin: (role: LoginRole, credentials?: { email: string; password: string }) => Promise<void> | void;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
@@ -40,7 +42,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
     setValidationMessage(message || "Choose Login as Employee or Login as Admin.");
   };
 
-  const handleRoleLogin = async (role: 'employee' | 'admin') => {
+  const handleRoleLogin = async (role: LoginRole) => {
     const message = validateCredentials();
     if (message) {
       setValidationMessage(message);

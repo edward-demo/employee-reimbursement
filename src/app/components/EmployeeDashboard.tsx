@@ -24,7 +24,7 @@ interface EmployeeDashboardProps {
   onLogout: () => void;
   onNewRequest: () => void;
   onNewOpticalRequest: () => void;
-  dashboardData?: EmployeeDashboardData;
+  dashboardData: EmployeeDashboardData;
 }
 
 export interface EmployeeDashboardData {
@@ -39,6 +39,12 @@ export interface EmployeeDashboardData {
     medicineApprovedAmount?: number;
     opticalApprovedAmount?: number;
   };
+  benefitsBalanceError?: boolean;
+  pendingRequestCount: number;
+  pendingRequestCountError?: boolean;
+  oldestPendingRequestDate?: string;
+  recentRequestsLoading?: boolean;
+  recentRequestsError?: boolean;
   reimbursementRequests: Array<{
     id: string;
     medicineName: string;
@@ -46,69 +52,25 @@ export interface EmployeeDashboardData {
     totalPrice: number;
     submittedDate: string;
     status: string;
+    lineManagerApproved?: boolean;
     category: "medicine" | "optical";
     remarks: string;
   }>;
 }
 
-const mockEmployeeDashboardData: EmployeeDashboardData = {
-  employee: {
-    name: "Jose Rizal",
-    id: "EMP-2024-001",
-    designation: "Software Engineer",
-    department: "Product Development",
-    email: "jose.rizal@company.com",
-    medicineLimit: 10000.00,
-    opticalLimit: 5000.00
-  },
-  reimbursementRequests: [
-    {
-      id: "REQ-001",
-      medicineName: "Paracetamol 500mg",
-      quantity: "30 tablets",
-      totalPrice: 450.00,
-      submittedDate: "2024-01-15",
-      status: "approved",
-      category: "medicine",
-      remarks: "Approved by HR. Payment processed."
-    },
-    {
-      id: "REQ-002",
-      medicineName: "Vitamin D3 Supplements",
-      quantity: "60 capsules",
-      totalPrice: 1200.00,
-      submittedDate: "2024-01-10",
-      status: "pending",
-      category: "medicine",
-      remarks: "Under review by finance team."
-    },
-    {
-      id: "REQ-003",
-      medicineName: "Antibiotic Course",
-      quantity: "21 tablets",
-      totalPrice: 850.00,
-      submittedDate: "2024-01-05",
-      status: "denied",
-      category: "medicine",
-      remarks: "Prescription date exceeds allowed timeframe."
-    },
-    {
-      id: "REQ-004",
-      medicineName: "Prescription Eyeglasses",
-      quantity: "1 pair",
-      totalPrice: 2500.00,
-      submittedDate: "2024-01-08",
-      status: "approved",
-      category: "optical",
-      remarks: "Approved by HR. Payment processed."
-    }
-  ]
-};
-
 export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest, dashboardData }: EmployeeDashboardProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const { employee, reimbursementRequests } = dashboardData ?? mockEmployeeDashboardData;
+  const {
+    employee,
+    reimbursementRequests,
+    benefitsBalanceError = false,
+    pendingRequestCount,
+    pendingRequestCountError = false,
+    oldestPendingRequestDate,
+    recentRequestsLoading = false,
+    recentRequestsError = false
+  } = dashboardData;
 
   // Calculate totals by category
   const medicineApprovedAmount = employee.medicineApprovedAmount ?? reimbursementRequests
@@ -128,11 +90,6 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
     ? Math.min((opticalApprovedAmount / employee.opticalLimit) * 100, 100)
     : 0;
 
-  const pendingRequests = reimbursementRequests.filter(req => req.status === 'pending');
-  const oldestPendingRequest = pendingRequests.length > 0
-    ? pendingRequests.sort((a, b) => new Date(a.submittedDate).getTime() - new Date(b.submittedDate).getTime())[0]
-    : null;
-
   const handleCategorySelect = (category: 'medicine' | 'optical') => {
     setIsCategoryModalOpen(false);
     if (category === 'medicine') {
@@ -142,17 +99,23 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, lineManagerApproved?: boolean) => {
     switch (status) {
       case 'approved':
         return <Badge className="bg-green-100 text-green-800 border-green-200">
           <CheckCircle className="w-3 h-3 mr-1" />
-          Approved
+          Approved by HR
         </Badge>;
       case 'pending':
+        if (lineManagerApproved) {
+          return <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Approved by LM • Pending HR Review
+          </Badge>;
+        }
         return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
           <Clock className="w-3 h-3 mr-1" />
-          Pending
+          Pending LM Review
         </Badge>;
       case 'denied':
         return <Badge className="bg-red-100 text-red-800 border-red-200">
@@ -223,37 +186,43 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
                   <CardTitle className="text-lg">Benefits Balance</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-6">
-                    {/* Medicine Balance */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-medium text-muted-foreground">Medicine</p>
+                  {benefitsBalanceError ? (
+                    <p className="text-sm text-muted-foreground">
+                      Unable to retrieve data. Please refresh the page.
+                    </p>
+                  ) : (
+                    <div className="space-y-6">
+                      {/* Medicine Balance */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-medium text-muted-foreground">Medicine</p>
+                        </div>
+                        <div className="text-3xl font-bold text-primary mb-1">₱{medicineRemainingBalance.toFixed(2)}</div>
+                        <p className="text-sm text-muted-foreground">₱{medicineApprovedAmount.toFixed(2)} used of ₱{employee.medicineLimit.toLocaleString()}</p>
+                        <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary transition-all"
+                            style={{ width: `${medicineUsagePercent}%` }}
+                          ></div>
+                        </div>
                       </div>
-                      <div className="text-3xl font-bold text-primary mb-1">₱{medicineRemainingBalance.toFixed(2)}</div>
-                      <p className="text-sm text-muted-foreground">₱{medicineApprovedAmount.toFixed(2)} used of ₱{employee.medicineLimit.toLocaleString()}</p>
-                      <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary transition-all"
-                          style={{ width: `${medicineUsagePercent}%` }}
-                        ></div>
-                      </div>
-                    </div>
 
-                    <div className="border-t pt-4">
-                      {/* Optical Balance */}
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-medium text-muted-foreground">Optical</p>
-                      </div>
-                      <div className="text-2xl font-bold text-secondary mb-1">₱{opticalRemainingBalance.toFixed(2)}</div>
-                      <p className="text-sm text-muted-foreground">₱{opticalApprovedAmount.toFixed(2)} used of ₱{employee.opticalLimit.toLocaleString()}</p>
-                      <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-secondary transition-all"
-                          style={{ width: `${opticalUsagePercent}%` }}
-                        ></div>
+                      <div className="border-t pt-4">
+                        {/* Optical Balance */}
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-medium text-muted-foreground">Optical</p>
+                        </div>
+                        <div className="text-2xl font-bold text-secondary mb-1">₱{opticalRemainingBalance.toFixed(2)}</div>
+                        <p className="text-sm text-muted-foreground">₱{opticalApprovedAmount.toFixed(2)} used of ₱{employee.opticalLimit.toLocaleString()}</p>
+                        <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-secondary transition-all"
+                            style={{ width: `${opticalUsagePercent}%` }}
+                          ></div>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -262,15 +231,20 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
                   <CardTitle className="text-lg">Pending Requests</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-4xl font-bold text-yellow-600 mb-2">{pendingRequests.length}</div>
-                  <p className="text-sm text-muted-foreground mb-4">Awaiting HR approval</p>
-                  {oldestPendingRequest && (
+                  <div className="text-4xl font-bold text-yellow-600 mb-2">{pendingRequestCountError ? "N/A" : pendingRequestCount}</div>
+                  <p className="text-sm text-muted-foreground mb-4">Awaiting review or HR approval</p>
+                  {pendingRequestCountError && (
                     <div className="pt-3 border-t">
-                      <p className="text-xs text-muted-foreground">Oldest request</p>
-                      <p className="text-sm font-medium">{oldestPendingRequest.submittedDate}</p>
+                      <p className="text-sm text-muted-foreground">Unable to retrieve data. Please refresh the page.</p>
                     </div>
                   )}
-                  {pendingRequests.length === 0 && (
+                  {!pendingRequestCountError && oldestPendingRequestDate && (
+                    <div className="pt-3 border-t">
+                      <p className="text-xs text-muted-foreground">Oldest request</p>
+                      <p className="text-sm font-medium">{oldestPendingRequestDate}</p>
+                    </div>
+                  )}
+                  {!pendingRequestCountError && pendingRequestCount === 0 && (
                     <div className="pt-3 border-t">
                       <p className="text-sm text-muted-foreground">No pending requests</p>
                     </div>
@@ -293,23 +267,29 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
               </CardContent>
             </Card>
 
-            {/* Recent Requests */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Requests</CardTitle>
-                <CardDescription>Your latest reimbursement submissions</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {reimbursementRequests.length === 0 && (
-                    <p className="text-sm text-muted-foreground">No reimbursement requests yet.</p>
-                  )}
-                  {reimbursementRequests.slice(0, 2).map((request) => (
-                    <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg">
+	            {/* Recent Requests */}
+	            <Card>
+	              <CardHeader>
+	                <CardTitle>Recent Requests</CardTitle>
+	                <CardDescription>Your latest reimbursement submissions</CardDescription>
+	              </CardHeader>
+	              <CardContent>
+	                <div className="space-y-4">
+	                  {recentRequestsLoading && (
+	                    <p className="text-sm text-muted-foreground">Loading...</p>
+	                  )}
+	                  {recentRequestsError && (
+	                    <p className="text-sm text-muted-foreground">Unable to retrieve recent requests. Please refresh the page.</p>
+	                  )}
+	                  {!recentRequestsLoading && !recentRequestsError && reimbursementRequests.length === 0 && (
+	                    <p className="text-sm text-muted-foreground">No reimbursement requests yet.</p>
+	                  )}
+	                  {!recentRequestsLoading && !recentRequestsError && reimbursementRequests.slice(0, 2).map((request) => (
+	                    <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg">
                       <div className="flex-1">
                         <div className="flex items-center space-x-2">
                           <h4 className="font-medium">{request.medicineName}</h4>
-                          {getStatusBadge(request.status)}
+                          {getStatusBadge(request.status, request.lineManagerApproved)}
                         </div>
                         <p className="text-sm text-muted-foreground">
                           {request.quantity} • ₱{request.totalPrice} • {request.submittedDate}
@@ -385,7 +365,7 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
                         <h3 className="text-lg font-semibold">{request.medicineName}</h3>
                         <p className="text-sm text-muted-foreground">Request ID: {request.id}</p>
                       </div>
-                      {getStatusBadge(request.status)}
+                      {getStatusBadge(request.status, request.lineManagerApproved)}
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">

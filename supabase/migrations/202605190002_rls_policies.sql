@@ -327,6 +327,7 @@ to authenticated
 with check (
   employee_profile_id = public.current_employee_profile_id()
   and status in ('draft', 'pending')
+  and current_review_stage = 'line_manager'
 );
 
 drop policy if exists "Admins and line managers can update accessible reimbursement requests" on public.reimbursement_requests;
@@ -334,7 +335,11 @@ create policy "Admins and line managers can update accessible reimbursement requ
 on public.reimbursement_requests for update
 to authenticated
 using (
-  public.has_role('admin')
+  (
+    public.has_role('admin')
+    and status = 'pending'
+    and current_review_stage in ('admin', 'finance')
+  )
   or (
     exists (
       select 1
@@ -343,10 +348,15 @@ using (
         and manager.is_line_manager = true
     )
     and public.can_access_employee_profile(employee_profile_id)
+    and status = 'pending'
+    and current_review_stage = 'line_manager'
   )
 )
 with check (
-  public.has_role('admin')
+  (
+    public.has_role('admin')
+    and current_review_stage in ('admin', 'finance')
+  )
   or (
     exists (
       select 1
@@ -355,6 +365,7 @@ with check (
         and manager.is_line_manager = true
     )
     and public.can_access_employee_profile(employee_profile_id)
+    and current_review_stage in ('line_manager', 'admin')
   )
 );
 
@@ -433,12 +444,18 @@ with check (
   decided_by_user_id = public.current_app_user_id()
   and public.can_access_reimbursement_request(reimbursement_request_id)
   and (
-    public.has_role('admin')
-    or exists (
-      select 1
-      from public.employee_profiles manager
-      where manager.employee_profile_id = public.current_employee_profile_id()
-        and manager.is_line_manager = true
+    (
+      public.has_role('admin')
+      and review_stage in ('admin', 'finance')
+    )
+    or (
+      review_stage = 'line_manager'
+      and exists (
+        select 1
+        from public.employee_profiles manager
+        where manager.employee_profile_id = public.current_employee_profile_id()
+          and manager.is_line_manager = true
+      )
     )
   )
 );
@@ -516,6 +533,7 @@ join public.employee_profiles ep on ep.department_id = d.department_id
 join public.reimbursement_requests rr on rr.employee_profile_id = ep.employee_profile_id
 group by d.department_id, d.name, rr.category;
 
+drop view if exists public.line_manager_queue;
 create or replace view public.line_manager_queue
 with (security_invoker = on) as
 select
@@ -526,6 +544,7 @@ select
   employee.full_name as employee_name,
   rr.category,
   rr.status,
+  rr.current_review_stage,
   rr.submitted_at,
   rr.claim_amount,
   extract(day from now() - rr.submitted_at)::integer as days_pending
@@ -534,7 +553,9 @@ join public.employee_profiles employee
   on employee.line_manager_employee_profile_id = manager.employee_profile_id
 join public.reimbursement_requests rr
   on rr.employee_profile_id = employee.employee_profile_id
-where manager.is_line_manager = true;
+where manager.is_line_manager = true
+  and rr.status = 'pending'
+  and rr.current_review_stage = 'line_manager';
 
 grant select on
   public.employee_benefit_usage,
