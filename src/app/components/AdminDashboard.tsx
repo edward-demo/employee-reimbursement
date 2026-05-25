@@ -31,7 +31,6 @@ import {
   AlertCircle,
   ArrowUpRight,
   ArrowDownRight,
-  ImageIcon,
   X as XIcon,
   Building2,
   FilterX
@@ -73,6 +72,15 @@ interface AdminOverviewRequestRow {
   } | {
     departments?: { name?: string | null } | { name?: string | null }[] | null;
   }[] | null;
+}
+
+interface AdminMonthlySummaryRequestRow {
+  reimbursement_request_id: string;
+  category: ReimbursementCategory;
+  status: string;
+  current_review_stage: string;
+  submitted_at: string | null;
+  claim_amount: number | string | null;
 }
 
 interface AdminRecentActivityRow {
@@ -164,6 +172,12 @@ interface AdminRequestDecisionRow {
 const adminOverviewErrorMessage = "Unable to retrieve data. Please refresh the page.";
 const missingDepartmentLabel = "Unassigned";
 const signedDocumentUrlExpirySeconds = 60 * 5;
+const adminPendingStatus = "pending";
+const adminApprovedStatus = "approved";
+const adminDeniedStatus = "denied";
+const lineManagerReviewStage = "line_manager_review";
+const hrAdminReviewStage = "hr_admin_review";
+const completedReviewStage = "completed";
 
 interface DepartmentBreakdownRow {
   department: string;
@@ -184,6 +198,19 @@ interface RecentActivityItem {
   status: string;
   currentReviewStage: string;
   totalPrice: number;
+}
+
+interface MonthlySummaryRow {
+  monthKey: string;
+  monthLabel: string;
+  requestCount: number;
+  pendingCount: number;
+  approvedCount: number;
+  deniedCount: number;
+  requestedAmount: number;
+  approvedAmount: number;
+  medicineApprovedAmount: number;
+  opticalApprovedAmount: number;
 }
 
 interface AdminRequestUiItem {
@@ -219,6 +246,7 @@ interface AdminRequestUiDocument {
 
 interface AdminRequestUiModel {
   id: string;
+  referenceNumber: string;
   employeeName: string;
   employeeId: string;
   department: string;
@@ -227,6 +255,7 @@ interface AdminRequestUiModel {
   status: string;
   currentReviewStage: string;
   category: ReimbursementCategory;
+  submittedYear: string | null;
   prescription: AdminRequestUiDocument;
   medicines: AdminRequestUiItem[];
   receipts: AdminRequestUiReceipt[];
@@ -260,6 +289,71 @@ const getRequestDepartmentName = (request: AdminOverviewRequestRow) => {
 const isApprovedByHr = (request: AdminOverviewRequestRow) => (
   request.status === "approved" && request.current_review_stage === "completed"
 );
+
+const getCalendarMonthKey = (date: Date) => (
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+);
+
+const getCalendarMonthLabel = (date: Date) => (
+  date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long"
+  })
+);
+
+const createMonthlySummaryRows = (requests: AdminMonthlySummaryRequestRow[]): MonthlySummaryRow[] => {
+  const summariesByMonth = new Map<string, MonthlySummaryRow>();
+
+  requests.forEach((request) => {
+    if (!request.submitted_at || (request.category !== "medicine" && request.category !== "optical")) {
+      return;
+    }
+
+    const submittedDate = new Date(request.submitted_at);
+    if (Number.isNaN(submittedDate.getTime())) {
+      return;
+    }
+
+    const monthKey = getCalendarMonthKey(submittedDate);
+    const existing = summariesByMonth.get(monthKey) ?? {
+      monthKey,
+      monthLabel: getCalendarMonthLabel(submittedDate),
+      requestCount: 0,
+      pendingCount: 0,
+      approvedCount: 0,
+      deniedCount: 0,
+      requestedAmount: 0,
+      approvedAmount: 0,
+      medicineApprovedAmount: 0,
+      opticalApprovedAmount: 0
+    };
+
+    const amount = Number(request.claim_amount ?? 0);
+
+    existing.requestCount += 1;
+    existing.requestedAmount += amount;
+
+    if (request.status === "pending") {
+      existing.pendingCount += 1;
+    } else if (request.status === "denied" || request.status === "declined") {
+      existing.deniedCount += 1;
+    } else if (request.status === "approved" && request.current_review_stage === "completed") {
+      existing.approvedCount += 1;
+      existing.approvedAmount += amount;
+
+      if (request.category === "medicine") {
+        existing.medicineApprovedAmount += amount;
+      } else {
+        existing.opticalApprovedAmount += amount;
+      }
+    }
+
+    summariesByMonth.set(monthKey, existing);
+  });
+
+  return Array.from(summariesByMonth.values())
+    .sort((first, second) => second.monthKey.localeCompare(first.monthKey));
+};
 
 const createDepartmentBreakdown = (requests: AdminOverviewRequestRow[]): DepartmentBreakdownRow[] => {
   const breakdownByDepartment = new Map<string, DepartmentBreakdownRow>();
@@ -337,6 +431,32 @@ const getCategoryLabel = (category: ReimbursementCategory) => (
   category === "medicine" ? "Medicine" : "Optical"
 );
 
+const formatPesoAmount = (amount: number) => (
+  `₱${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+);
+
+const isUuid = (value: string) => (
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+);
+
+const isAdminRelevantRequest = (request: Pick<AdminRequestUiModel, "status" | "currentReviewStage">) => (
+  (request.status === adminPendingStatus && request.currentReviewStage === hrAdminReviewStage) ||
+  (request.status === adminApprovedStatus && request.currentReviewStage === completedReviewStage) ||
+  (request.status === adminDeniedStatus && request.currentReviewStage === completedReviewStage)
+);
+
+const requestFilterSelectItemClass = "data-[state=checked]:bg-primary/10 data-[state=checked]:text-primary";
+
+const getSubmittedYear = (submittedAt: string) => {
+  const submittedDate = new Date(submittedAt);
+
+  if (Number.isNaN(submittedDate.getTime())) {
+    return null;
+  }
+
+  return String(submittedDate.getFullYear());
+};
+
 const createRecentActivityItems = (requests: AdminRecentActivityRow[]): RecentActivityItem[] => (
   requests.map((request) => {
     const employeeProfile = getRelatedRecord(request.employee_profiles);
@@ -394,7 +514,8 @@ const createAdminRequestUiModels = ({
     const remarks = requestDecision?.decision_reason_text || requestDecision?.decision_reason_code || undefined;
 
     return {
-      id: request.request_reference_number || request.request_number || request.reimbursement_request_id,
+      id: request.reimbursement_request_id,
+      referenceNumber: request.request_reference_number || request.request_number || request.reimbursement_request_id,
       employeeName: employeeProfile?.full_name?.trim() || "Unknown Employee",
       employeeId: employeeProfile?.employee_number?.trim() || "Unassigned",
       department: department?.name?.trim() || missingDepartmentLabel,
@@ -403,6 +524,7 @@ const createAdminRequestUiModels = ({
       status: request.status,
       currentReviewStage: request.current_review_stage,
       category: request.category,
+      submittedYear: getSubmittedYear(request.submitted_at),
       prescription: {
         id: requestPrescription?.reimbursement_document_id || `${request.reimbursement_request_id}-prescription`,
         type: "prescription",
@@ -459,14 +581,18 @@ const createEmptyOverviewMetrics = (): AdminOverviewMetrics => ({
 export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
+  const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDepartment, setFilterDepartment] = useState("all");
+  const [filterYear, setFilterYear] = useState("all");
   const [denialReason, setDenialReason] = useState("duplicate");
   const [customDenialReason, setCustomDenialReason] = useState("");
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isDenyDialogOpen, setIsDenyDialogOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<AdminPreviewDocumentState | null>(null);
+  const [approvingRequestId, setApprovingRequestId] = useState<string | null>(null);
   const [overviewMetrics, setOverviewMetrics] = useState<AdminOverviewMetrics | null>(null);
+  const [monthlySummaryRows, setMonthlySummaryRows] = useState<MonthlySummaryRow[]>([]);
   const [departmentBreakdown, setDepartmentBreakdown] = useState<DepartmentBreakdownRow[]>([]);
   const [recentActivityRequests, setRecentActivityRequests] = useState<RecentActivityItem[]>([]);
   const [adminRequests, setAdminRequests] = useState<AdminRequestUiModel[]>([]);
@@ -476,6 +602,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
   const loadReimbursementOverview = useCallback(async () => {
     if (!supabase) {
       setOverviewMetrics(null);
+      setMonthlySummaryRows([]);
       setDepartmentBreakdown([]);
       setRecentActivityRequests([]);
       setAdminRequests([]);
@@ -512,6 +639,26 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
         throw error;
       }
 
+      const { data: monthlySummaryData, error: monthlySummaryError } = await supabase
+        .from("reimbursement_requests")
+        .select(`
+          reimbursement_request_id,
+          category,
+          status,
+          current_review_stage,
+          submitted_at,
+          claim_amount
+        `)
+        .gte("submitted_at", monthStart)
+        .lt("submitted_at", nextMonthStart)
+        .in("category", ["medicine", "optical"])
+        .in("status", ["approved", "pending", "denied", "declined"])
+        .order("submitted_at", { ascending: false });
+
+      if (monthlySummaryError) {
+        throw monthlySummaryError;
+      }
+
       const { data: recentActivityData, error: recentActivityError } = await supabase
         .from("reimbursement_requests")
         .select(`
@@ -527,8 +674,8 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
             full_name
           )
         `)
-        .eq("status", "pending")
-        .eq("current_review_stage", "hr_admin_review")
+        .eq("status", adminPendingStatus)
+        .eq("current_review_stage", hrAdminReviewStage)
         .in("category", ["medicine", "optical"])
         .order("submitted_at", { ascending: false })
         .limit(5);
@@ -557,8 +704,8 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
             departments(name)
           )
         `)
-        .eq("status", "pending")
-        .eq("current_review_stage", "hr_admin_review")
+        .in("status", [adminPendingStatus, adminApprovedStatus, adminDeniedStatus])
+        .in("current_review_stage", [hrAdminReviewStage, completedReviewStage])
         .in("category", ["medicine", "optical"])
         .order("submitted_at", { ascending: false });
 
@@ -566,7 +713,12 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
         throw requestError;
       }
 
-      const requestRows = (requestData ?? []) as AdminRequestRow[];
+      const requestRows = ((requestData ?? []) as AdminRequestRow[]).filter((request) => (
+        isAdminRelevantRequest({
+          status: request.status,
+          currentReviewStage: request.current_review_stage
+        })
+      ));
       const requestIds = requestRows.map((request) => request.reimbursement_request_id);
 
       const { data: requestItemsData, error: requestItemsError } = requestIds.length > 0
@@ -666,6 +818,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
       });
 
       setOverviewMetrics(nextMetrics);
+      setMonthlySummaryRows(createMonthlySummaryRows((monthlySummaryData ?? []) as AdminMonthlySummaryRequestRow[]));
       setDepartmentBreakdown(createDepartmentBreakdown(overviewRequestRows));
       setRecentActivityRequests(createRecentActivityItems((recentActivityData ?? []) as AdminRecentActivityRow[]));
       setAdminRequests(createAdminRequestUiModels({
@@ -678,6 +831,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
     } catch (error) {
       console.error("Admin reimbursement overview could not be loaded.", error);
       setOverviewMetrics(null);
+      setMonthlySummaryRows([]);
       setDepartmentBreakdown([]);
       setRecentActivityRequests([]);
       setAdminRequests([]);
@@ -728,10 +882,77 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
       .slice(0, 2);
   };
 
-  const handleApprove = (requestId: string) => {
-    console.log("Approving request:", requestId);
-    // In real app, this would update the database
-    setIsViewDialogOpen(false);
+  const handleApprove = async (request: AdminRequestUiModel) => {
+    const requestId = request.id;
+
+    if (!supabase || approvingRequestId) {
+      return;
+    }
+
+    try {
+      setApprovingRequestId(requestId);
+
+      if (import.meta.env.DEV) {
+        console.info("Admin approve RPC starting.", {
+          requestId,
+          referenceNumber: request.referenceNumber,
+          isUuid: isUuid(requestId),
+          status: request.status,
+          currentReviewStage: request.currentReviewStage,
+          supabaseUrl: import.meta.env.VITE_SUPABASE_URL
+        });
+      }
+
+      const { data: approvedRequest, error: approvalError } = await supabase
+        .rpc("admin_approve_reimbursement_request", {
+          p_reimbursement_request_id: requestId,
+          p_remarks: null
+        })
+        .maybeSingle();
+
+      if (import.meta.env.DEV) {
+        console.info("Admin approve RPC result.", {
+          requestId,
+          data: approvedRequest,
+          error: approvalError,
+          code: approvalError?.code,
+          message: approvalError?.message,
+          details: approvalError?.details,
+          hint: approvalError?.hint
+        });
+      }
+
+      if (approvalError) {
+        console.error("Admin approve RPC failed.", {
+          requestId,
+          referenceNumber: request.referenceNumber,
+          error: approvalError,
+          code: approvalError.code,
+          message: approvalError.message,
+          details: approvalError.details,
+          hint: approvalError.hint
+        });
+        throw new Error(approvalError.message);
+      }
+
+      if (
+        !approvedRequest ||
+        approvedRequest.status !== adminApprovedStatus ||
+        approvedRequest.current_review_stage !== completedReviewStage
+      ) {
+        console.error("Admin approval RPC returned an unexpected result.", approvedRequest);
+        throw new Error("The reimbursement request was not approved.");
+      }
+
+      setIsViewDialogOpen(false);
+      setSelectedRequest(null);
+      await loadReimbursementOverview();
+    } catch (error) {
+      console.error("Admin approval could not be completed.", error);
+      window.alert("Unable to approve this request. Please try again.");
+    } finally {
+      setApprovingRequestId(null);
+    }
   };
 
   const handleDeny = (requestId: string) => {
@@ -930,21 +1151,29 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
   };
 
   const filteredRequests = adminRequests.filter(request => {
+    if (!isAdminRelevantRequest(request) || request.currentReviewStage === lineManagerReviewStage) {
+      return false;
+    }
+
     const statusMatch =
-      filterStatus === "all" ||
-      (filterStatus === "pending_line_manager" && request.status === "pending" && request.currentReviewStage === "line_manager_review") ||
-      (filterStatus === "pending_admin" && request.status === "pending" && request.currentReviewStage === "hr_admin_review") ||
-      request.status === filterStatus;
+      (filterStatus === "all" && isAdminRelevantRequest(request)) ||
+      (filterStatus === adminPendingStatus && request.status === adminPendingStatus && request.currentReviewStage === hrAdminReviewStage) ||
+      (filterStatus === adminApprovedStatus && request.status === adminApprovedStatus && request.currentReviewStage === completedReviewStage) ||
+      (filterStatus === adminDeniedStatus && request.status === adminDeniedStatus && request.currentReviewStage === completedReviewStage);
+    const typeMatch = filterType === "all" || request.category === filterType;
     const departmentMatch = filterDepartment === "all" || request.department === filterDepartment;
-    return statusMatch && departmentMatch;
+    const yearMatch = filterYear === "all" || request.submittedYear === filterYear;
+    return typeMatch && statusMatch && departmentMatch && yearMatch;
   });
 
   const clearFilters = () => {
+    setFilterType("all");
     setFilterStatus("all");
     setFilterDepartment("all");
+    setFilterYear("all");
   };
 
-  const hasActiveFilters = filterStatus !== "all" || filterDepartment !== "all";
+  const hasActiveFilters = filterType !== "all" || filterStatus !== "all" || filterDepartment !== "all" || filterYear !== "all";
 
   const displayedOverviewMetrics = overviewMetrics ?? createEmptyOverviewMetrics();
   const medicineApproved = displayedOverviewMetrics.medicine.approved;
@@ -958,6 +1187,10 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
   const totalMedicineReimbursed = displayedOverviewMetrics.medicine.totalReimbursed;
   const totalOpticalReimbursed = displayedOverviewMetrics.optical.totalReimbursed;
   const totalReimbursed = totalMedicineReimbursed + totalOpticalReimbursed;
+  const currentMonthlySummary = monthlySummaryRows[0] ?? null;
+  const monthlySummaryMedicineReimbursed = currentMonthlySummary?.medicineApprovedAmount ?? 0;
+  const monthlySummaryOpticalReimbursed = currentMonthlySummary?.opticalApprovedAmount ?? 0;
+  const monthlySummaryTotalReimbursed = currentMonthlySummary?.approvedAmount ?? 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5">
@@ -1237,7 +1470,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
           </TabsContent>
 
           {/* Requests Tab */}
-          <TabsContent value="requests" className="space-y-6">
+          <TabsContent value="requests" className="space-y-6 data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:slide-in-from-right-8 data-[state=active]:duration-200">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div>
                 <h2 className="text-2xl font-bold">Reimbursement Requests</h2>
@@ -1245,29 +1478,49 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
-                <Select value={filterStatus} onValueChange={setFilterStatus}>
-                  <SelectTrigger className="w-36 bg-white">
+                <Select value={filterType} onValueChange={setFilterType}>
+                  <SelectTrigger className="w-36 rounded-lg border-primary/15 bg-white shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="pending_line_manager">Pending LM Review</SelectItem>
-                    <SelectItem value="pending_admin">Approved by LM / Pending HR Review</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="denied">Denied</SelectItem>
+                    <SelectItem value="all" className={requestFilterSelectItemClass}>All Types</SelectItem>
+                    <SelectItem value="medicine" className={requestFilterSelectItemClass}>Medicine</SelectItem>
+                    <SelectItem value="optical" className={requestFilterSelectItemClass}>Optical</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={filterStatus} onValueChange={setFilterStatus}>
+                  <SelectTrigger className="w-36 rounded-lg border-primary/15 bg-white shadow-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" className={requestFilterSelectItemClass}>All Status</SelectItem>
+                    <SelectItem value="pending" className={requestFilterSelectItemClass}>Pending</SelectItem>
+                    <SelectItem value="approved" className={requestFilterSelectItemClass}>Approved</SelectItem>
+                    <SelectItem value="denied" className={requestFilterSelectItemClass}>Denied</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={filterDepartment} onValueChange={setFilterDepartment}>
-                  <SelectTrigger className="w-48 bg-white">
+                  <SelectTrigger className="w-48 rounded-lg border-primary/15 bg-white shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Departments</SelectItem>
-                    <SelectItem value="Product Development">Product Development</SelectItem>
-                    <SelectItem value="Finance">Finance</SelectItem>
-                    <SelectItem value="HR">HR</SelectItem>
-                    <SelectItem value="Admin">Admin</SelectItem>
-                    <SelectItem value="IT Helpdesk">IT Helpdesk</SelectItem>
+                    <SelectItem value="all" className={requestFilterSelectItemClass}>All Departments</SelectItem>
+                    <SelectItem value="Product Development" className={requestFilterSelectItemClass}>Product Development</SelectItem>
+                    <SelectItem value="Finance" className={requestFilterSelectItemClass}>Finance</SelectItem>
+                    <SelectItem value="HR" className={requestFilterSelectItemClass}>HR</SelectItem>
+                    <SelectItem value="Admin" className={requestFilterSelectItemClass}>Admin</SelectItem>
+                    <SelectItem value="IT Helpdesk" className={requestFilterSelectItemClass}>IT Helpdesk</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={filterYear} onValueChange={setFilterYear}>
+                  <SelectTrigger className="w-36 rounded-lg border-primary/15 bg-white shadow-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" className={requestFilterSelectItemClass}>All Years</SelectItem>
+                    <SelectItem value="2024" className={requestFilterSelectItemClass}>2024</SelectItem>
+                    <SelectItem value="2025" className={requestFilterSelectItemClass}>2025</SelectItem>
+                    <SelectItem value="2026" className={requestFilterSelectItemClass}>2026</SelectItem>
                   </SelectContent>
                 </Select>
                 {hasActiveFilters && (
@@ -1291,9 +1544,13 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                   {filteredRequests.length} result{filteredRequests.length !== 1 ? 's' : ''}
                 </Badge>
                 <span className="text-sm text-muted-foreground">
+                  {filterType !== "all" && `Type: ${filterType}`}
+                  {filterType !== "all" && (filterStatus !== "all" || filterDepartment !== "all" || filterYear !== "all") && " • "}
                   {filterStatus !== "all" && `Status: ${filterStatus}`}
-                  {filterStatus !== "all" && filterDepartment !== "all" && " • "}
+                  {filterStatus !== "all" && (filterDepartment !== "all" || filterYear !== "all") && " • "}
                   {filterDepartment !== "all" && `Department: ${filterDepartment}`}
+                  {filterDepartment !== "all" && filterYear !== "all" && " • "}
+                  {filterYear !== "all" && `Year: ${filterYear}`}
                 </span>
               </div>
             )}
@@ -1386,7 +1643,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                         View Full Details
                       </Button>
 
-                      {request.status === 'pending' && request.currentReviewStage === 'hr_admin_review' && (
+                      {request.status === 'pending' && request.currentReviewStage === hrAdminReviewStage && (
                         <div className="flex items-center space-x-2">
                           <Button
                             variant="outline"
@@ -1403,10 +1660,11 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                           <Button
                             size="sm"
                             className="bg-green-600 hover:bg-green-700"
-                            onClick={() => handleApprove(request.id)}
+                            onClick={() => void handleApprove(request)}
+                            disabled={approvingRequestId === request.id}
                           >
                             <CheckCircle className="h-4 w-4 mr-2" />
-                            Approve
+                            {approvingRequestId === request.id ? "Approving..." : "Approve"}
                           </Button>
                         </div>
                       )}
@@ -1426,7 +1684,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                 <DialogHeader>
                   <DialogTitle>Reimbursement Request Details</DialogTitle>
                   <DialogDescription>
-                    Complete information for request {selectedRequest?.id}
+                    Complete information for request {selectedRequest?.referenceNumber}
                   </DialogDescription>
                 </DialogHeader>
 
@@ -1654,7 +1912,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                       )}
 
                       {/* Action Buttons */}
-                      {selectedRequest.status === 'pending' && selectedRequest.currentReviewStage === 'hr_admin_review' && (
+                      {selectedRequest.status === 'pending' && selectedRequest.currentReviewStage === hrAdminReviewStage && (
                         <div className="flex justify-end space-x-3 pt-4">
                           <Button
                             variant="outline"
@@ -1668,10 +1926,11 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                           </Button>
                           <Button
                             className="bg-green-600 hover:bg-green-700"
-                            onClick={() => handleApprove(selectedRequest.id)}
+                            onClick={() => void handleApprove(selectedRequest)}
+                            disabled={approvingRequestId === selectedRequest.id}
                           >
                             <CheckCircle className="h-4 w-4 mr-2" />
-                            Approve Request
+                            {approvingRequestId === selectedRequest.id ? "Approving..." : "Approve Request"}
                           </Button>
                         </div>
                       )}
@@ -1732,7 +1991,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                 <DialogHeader>
                   <DialogTitle>Deny Reimbursement Request</DialogTitle>
                   <DialogDescription>
-                    Please select a reason for denying request {selectedRequest?.id}
+                    Please select a reason for denying request {selectedRequest?.referenceNumber}
                   </DialogDescription>
                 </DialogHeader>
 
@@ -1823,29 +2082,29 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                     <div className="p-6 text-center" role="alert">
                       <p className="text-sm text-muted-foreground">{overviewError}</p>
                     </div>
+                  ) : !currentMonthlySummary ? (
+                    <div className="p-6 text-center">
+                      <p className="text-sm text-muted-foreground">No reimbursement activity found for this month.</p>
+                    </div>
                   ) : (
                     <>
                       <div className="grid grid-cols-2 gap-4 text-center">
                         <div className="p-4 bg-primary/5 rounded-lg">
-                          <div className="text-xl font-bold text-primary">₱{totalMedicineReimbursed.toLocaleString()}</div>
+                          <div className="text-xl font-bold text-primary">₱{monthlySummaryMedicineReimbursed.toLocaleString()}</div>
                           <p className="text-sm text-muted-foreground">Medicine</p>
                         </div>
                         <div className="p-4 bg-secondary/5 rounded-lg">
-                          <div className="text-xl font-bold text-secondary">₱{totalOpticalReimbursed.toLocaleString()}</div>
+                          <div className="text-xl font-bold text-secondary">₱{monthlySummaryOpticalReimbursed.toLocaleString()}</div>
                           <p className="text-sm text-muted-foreground">Optical</p>
                         </div>
                       </div>
                       <div className="p-3 bg-muted/20 rounded-lg text-center border-t">
-                        <div className="text-2xl font-bold">₱{totalReimbursed.toLocaleString()}</div>
+                        <div className="text-2xl font-bold">₱{monthlySummaryTotalReimbursed.toLocaleString()}</div>
                         <p className="text-sm text-muted-foreground">Total Reimbursed</p>
                       </div>
                     </>
                   )}
                   <div className="space-y-2">
-                    <Button className="w-full" variant="outline">
-                      <ImageIcon className="h-4 w-4 mr-2" />
-                      View Screenshot
-                    </Button>
                     <Button className="w-full" variant="outline">
                       <Download className="h-4 w-4 mr-2" />
                       Download Report
@@ -1860,7 +2119,7 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                     <TrendingUp className="h-5 w-5 mr-2" />
                     Department Breakdown
                   </CardTitle>
-                  <CardDescription>Approved reimbursements by department</CardDescription>
+                  <CardDescription>Reimbursements by department</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {isOverviewLoading ? (
@@ -1876,29 +2135,22 @@ export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) 
                       <p className="text-sm text-muted-foreground">No approved reimbursements found for this month.</p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {departmentBreakdown.map((dept) => (
-                        <div key={dept.department}>
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="font-medium">{dept.department}</span>
-                            <span className="font-bold">₱{dept.totalAmount.toLocaleString()}</span>
+                        <div key={dept.department} className="space-y-1.5">
+                          <div className="flex items-start justify-between gap-4">
+                            <span className="font-bold leading-tight">{dept.department}</span>
+                            <span className="font-bold leading-tight text-right">{formatPesoAmount(dept.totalAmount)}</span>
                           </div>
-                          <div className="flex justify-between items-center text-sm text-muted-foreground pl-4">
-                            <span>Medicine: ₱{dept.medicine.toLocaleString()}</span>
-                            <span>Optical: ₱{dept.optical.toLocaleString()}</span>
+                          <div className="flex items-center justify-between gap-4 pl-4 text-sm text-gray-700">
+                            <span>Medicine: {formatPesoAmount(dept.medicine)}</span>
+                            <span className="text-right">Optical: {formatPesoAmount(dept.optical)}</span>
                           </div>
-                          <p className="text-xs text-muted-foreground pl-4">
-                            {dept.requestCount} request{dept.requestCount === 1 ? "" : "s"}
-                          </p>
                         </div>
                       ))}
                     </div>
                   )}
                   <div className="space-y-2">
-                    <Button className="w-full" variant="outline">
-                      <ImageIcon className="h-4 w-4 mr-2" />
-                      View Screenshot
-                    </Button>
                     <Button className="w-full" variant="outline">
                       <Download className="h-4 w-4 mr-2" />
                       Export Details

@@ -28,6 +28,18 @@ const OpticalReimbursementForm = lazy(() =>
 
 type UserRole = 'employee' | 'admin' | 'line-manager' | null;
 type LoginRole = 'employee' | 'admin';
+type DashboardDebugContext = {
+  authUserId?: string;
+  email?: string;
+  appUserId?: string;
+  preferredRole?: Exclude<UserRole, null>;
+  resolvedRole?: Exclude<UserRole, null>;
+};
+type DashboardQueryDebugContext = DashboardDebugContext & {
+  filters?: Record<string, unknown>;
+  returnedData?: unknown;
+  returnedError?: unknown;
+};
 const loginRoleLabels: Record<LoginRole, string> = {
   employee: "Employee",
   admin: "Admin"
@@ -82,6 +94,60 @@ const getSupportedMimeType = (file: File) => {
   if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) return "image/jpeg";
 
   return "";
+};
+
+const logDashboardLoadError = (
+  queryName: string,
+  tableOrRpc: string,
+  error: unknown,
+  context: DashboardDebugContext = {}
+) => {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "object" && error && "message" in error
+      ? String((error as { message?: unknown }).message)
+      : String(error ?? "Unknown dashboard loading error");
+
+  console.error("[dashboard-load-error]", {
+    authenticatedUserId: context.authUserId,
+    email: context.email,
+    appUserId: context.appUserId,
+    preferredRole: context.preferredRole,
+    resolvedRole: context.resolvedRole,
+    failedQueryName: queryName,
+    failedSupabaseQueryNameOrTable: tableOrRpc,
+    supabaseErrorMessage: message
+  });
+};
+
+const logDashboardSupabaseQuery = (
+  queryName: string,
+  tableOrRpc: string,
+  context: DashboardQueryDebugContext = {}
+) => {
+  console.info("[dashboard-supabase-query]", {
+    authenticatedUserId: context.authUserId,
+    email: context.email,
+    appUserId: context.appUserId,
+    preferredRole: context.preferredRole,
+    resolvedRole: context.resolvedRole,
+    tableQueried: tableOrRpc,
+    queryName,
+    filtersUsed: context.filters,
+    returnedData: context.returnedData,
+    returnedError: context.returnedError
+  });
+};
+
+const duplicateEmployeeProfileMessage = "Multiple employee profiles are linked to this user. Please clean up duplicate employee_profiles rows and add a unique constraint on employee_profiles.user_id.";
+
+const isAccessProfileError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+
+  return message.includes("profile is linked")
+    || message.includes("Multiple employee profiles")
+    || message.includes("not assigned to")
+    || message.includes("access denied");
 };
 
 function ScreenLoadingFallback() {
@@ -370,7 +436,7 @@ function AppRoutes() {
     }
   };
 
-  const getAssignedRoleCodes = async (appUserId: string) => {
+  const getAssignedRoleCodes = async (appUserId: string, debugContext: DashboardDebugContext = {}) => {
     if (!supabase) {
       throw new Error("Supabase is not configured.");
     }
@@ -380,7 +446,19 @@ function AppRoutes() {
       .select("roles(code)")
       .eq("user_id", appUserId);
 
+    logDashboardSupabaseQuery("getAssignedRoleCodes", "user_roles roles(code)", {
+      ...debugContext,
+      appUserId,
+      filters: { user_id: appUserId },
+      returnedData: roles,
+      returnedError: rolesError
+    });
+
     if (rolesError) {
+      logDashboardLoadError("getAssignedRoleCodes", "user_roles roles(code)", rolesError, {
+        ...debugContext,
+        appUserId
+      });
       throw new Error(rolesError.message);
     }
 
@@ -392,32 +470,84 @@ function AppRoutes() {
       .filter(Boolean);
   };
 
-  const getIsLineManager = async (appUserId: string) => {
+  const getEmployeeProfilesByUserId = async (
+    queryName: string,
+    selectColumns: string,
+    appUserId: string,
+    debugContext: DashboardDebugContext = {},
+    extraFilters: Record<string, unknown> = {}
+  ) => {
     if (!supabase) {
       throw new Error("Supabase is not configured.");
     }
 
-    const { data: profile, error: profileError } = await supabase
+    let query = supabase
       .from("employee_profiles")
-      .select("is_line_manager")
-      .eq("user_id", appUserId)
-      .single();
+      .select(selectColumns)
+      .eq("user_id", appUserId);
 
-    if (profileError || !profile) {
-      throw new Error(profileError?.message ?? "No employee profile is linked to this user.");
+    for (const [column, value] of Object.entries(extraFilters)) {
+      query = query.eq(column, value as never);
+    }
+
+    const { data, error } = await query.limit(2);
+    const filters = {
+      user_id: appUserId,
+      ...extraFilters
+    };
+
+    logDashboardSupabaseQuery(queryName, "employee_profiles", {
+      ...debugContext,
+      appUserId,
+      filters,
+      returnedData: data,
+      returnedError: error
+    });
+
+    if (error) {
+      logDashboardLoadError(queryName, "employee_profiles", error, {
+        ...debugContext,
+        appUserId
+      });
+      throw new Error(error.message);
+    }
+
+    const profiles = data ?? [];
+
+    if (profiles.length > 1) {
+      const error = new Error(duplicateEmployeeProfileMessage);
+      logDashboardLoadError(queryName, "employee_profiles", error, {
+        ...debugContext,
+        appUserId
+      });
+      throw error;
+    }
+
+    return profiles[0] ?? null;
+  };
+
+  const getIsLineManager = async (appUserId: string, debugContext: DashboardDebugContext = {}) => {
+    const profile = await getEmployeeProfilesByUserId(
+      "getIsLineManager",
+      "is_line_manager",
+      appUserId,
+      debugContext
+    );
+
+    if (!profile) {
+      return false;
     }
 
     return Boolean((profile as any).is_line_manager);
   };
 
-  const getEmployeeDashboardProfile = async (appUserId: string) => {
-    if (!supabase) {
-      throw new Error("Supabase is not configured.");
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("employee_profiles")
-      .select(`
+  const getEmployeeDashboardProfile = async (
+    appUserId: string,
+    debugContext: DashboardDebugContext = {}
+  ) => {
+    const profile = await getEmployeeProfilesByUserId(
+      "getEmployeeDashboardProfile",
+      `
         employee_profile_id,
         employee_number,
         full_name,
@@ -425,12 +555,13 @@ function AppRoutes() {
         is_line_manager,
         departments(name),
         users(email)
-      `)
-      .eq("user_id", appUserId)
-      .single();
+      `,
+      appUserId,
+      debugContext
+    );
 
-    if (profileError || !profile) {
-      throw new Error(profileError?.message ?? "No employee profile is linked to this user.");
+    if (!profile) {
+      throw new Error("No employee profile is linked to this user.");
     }
 
     return profile;
@@ -438,15 +569,16 @@ function AppRoutes() {
 
   const loadEmployeeDashboardData = async (
     appUserId: string,
-    validatedProfile?: Awaited<ReturnType<typeof getEmployeeDashboardProfile>>
+    validatedProfile?: Awaited<ReturnType<typeof getEmployeeDashboardProfile>>,
+    debugContext: DashboardDebugContext = {}
   ): Promise<EmployeeDashboardData> => {
     if (!supabase) {
       throw new Error("Supabase is not configured.");
     }
 
-    const profile = validatedProfile ?? await getEmployeeDashboardProfile(appUserId);
+    const profile = validatedProfile ?? await getEmployeeDashboardProfile(appUserId, debugContext);
 
-    if (!validatedProfile && !(await getAssignedRoleCodes(appUserId)).includes("employee")) {
+    if (!validatedProfile && !(await getAssignedRoleCodes(appUserId, debugContext)).includes("employee")) {
       throw new Error("This account is not assigned to the Employee portal.");
     }
 
@@ -562,25 +694,25 @@ function AppRoutes() {
     };
   };
 
-  const loadLineManagerProfileData = async (appUserId: string): Promise<LineManagerProfileData> => {
-    if (!supabase) {
-      throw new Error("Supabase is not configured.");
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("employee_profiles")
-      .select(`
+  const loadLineManagerProfileData = async (
+    appUserId: string,
+    debugContext: DashboardDebugContext = {}
+  ): Promise<LineManagerProfileData> => {
+    const profile = await getEmployeeProfilesByUserId(
+      "loadLineManagerProfileData",
+      `
         employee_profile_id,
         full_name,
         designation,
         departments(name)
-      `)
-      .eq("user_id", appUserId)
-      .eq("is_line_manager", true)
-      .single();
+      `,
+      appUserId,
+      debugContext,
+      { is_line_manager: true }
+    );
 
-    if (profileError || !profile) {
-      throw new Error(profileError?.message ?? "No line manager profile is linked to this user.");
+    if (!profile) {
+      throw new Error("No line manager profile is linked to this user.");
     }
 
     const department = Array.isArray((profile as any).departments)
@@ -595,25 +727,28 @@ function AppRoutes() {
     };
   };
 
-  const loadAdminProfileData = async (appUserId: string): Promise<AdminProfileData> => {
-    if (!supabase) {
-      throw new Error("Supabase is not configured.");
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("employee_profiles")
-      .select(`
+  const loadAdminProfileData = async (
+    appUserId: string,
+    debugContext: DashboardDebugContext = {}
+  ): Promise<AdminProfileData> => {
+    const profile = await getEmployeeProfilesByUserId(
+      "loadAdminProfileData",
+      `
         employee_number,
         full_name,
         designation,
         departments(name),
         users(email)
-      `)
-      .eq("user_id", appUserId)
-      .single();
+      `,
+      appUserId,
+      {
+        ...debugContext,
+        resolvedRole: debugContext.resolvedRole ?? "admin"
+      }
+    );
 
-    if (profileError || !profile) {
-      throw new Error(profileError?.message ?? "No admin profile is linked to this user.");
+    if (!profile) {
+      throw new Error("No admin profile is linked to this user.");
     }
 
     const department = Array.isArray((profile as any).departments)
@@ -634,7 +769,7 @@ function AppRoutes() {
     };
   };
 
-  const getCurrentAppUserId = async () => {
+  const getCurrentAppUserId = async (debugContext: DashboardDebugContext = {}) => {
     if (!supabase) {
       throw new Error("Supabase is not configured.");
     }
@@ -643,8 +778,16 @@ function AppRoutes() {
       p_display_name: null
     });
 
+    logDashboardSupabaseQuery("getCurrentAppUserId", "rpc ensure_current_supabase_user", {
+      ...debugContext,
+      returnedData: appUserId,
+      returnedError: linkError
+    });
+
     if (linkError || !appUserId) {
-      throw new Error(linkError?.message ?? "No app user was returned.");
+      const error = linkError ?? new Error("No app user was returned.");
+      logDashboardLoadError("getCurrentAppUserId", "rpc ensure_current_supabase_user", error, debugContext);
+      throw new Error(error.message);
     }
 
     return appUserId as string;
@@ -677,16 +820,25 @@ function AppRoutes() {
 
   const resolveDestinationRole = async (
     appUserId: string,
-    preferredRole?: Exclude<UserRole, null>
+    preferredRole?: Exclude<UserRole, null>,
+    debugContext: DashboardDebugContext = {}
   ): Promise<{ destinationRole: Exclude<UserRole, null>; usedAdminLineManagerFallback: boolean }> => {
-    const assignedRoleCodes = await getAssignedRoleCodes(appUserId);
+    const assignedRoleCodes = await getAssignedRoleCodes(appUserId, {
+      ...debugContext,
+      appUserId,
+      preferredRole
+    });
     const hasEmployeeAccess = assignedRoleCodes.includes("employee");
     const hasAdminAccess = assignedRoleCodes.includes("admin");
     let isLineManager = false;
 
     const loadIsLineManager = async () => {
       if (!isLineManager) {
-        isLineManager = await getIsLineManager(appUserId);
+        isLineManager = await getIsLineManager(appUserId, {
+          ...debugContext,
+          appUserId,
+          preferredRole
+        });
       }
       return isLineManager;
     };
@@ -735,29 +887,40 @@ function AppRoutes() {
 
   const applyAuthenticatedState = async (
     appUserId: string,
-    preferredRole?: Exclude<UserRole, null>
+    preferredRole?: Exclude<UserRole, null>,
+    debugContext: DashboardDebugContext = {}
   ) => {
-    const { destinationRole, usedAdminLineManagerFallback } = await resolveDestinationRole(appUserId, preferredRole);
+    const { destinationRole, usedAdminLineManagerFallback } = await resolveDestinationRole(
+      appUserId,
+      preferredRole,
+      debugContext
+    );
+    const resolvedDebugContext = {
+      ...debugContext,
+      appUserId,
+      preferredRole,
+      resolvedRole: destinationRole
+    };
 
     if (destinationRole === 'employee') {
-      const employeeProfile = await getEmployeeDashboardProfile(appUserId);
+      const employeeProfile = await getEmployeeDashboardProfile(appUserId, resolvedDebugContext);
       setEmployeeDashboardData(undefined);
       setAdminProfileData(undefined);
       setLineManagerProfileData(undefined);
       setUserRole(destinationRole);
       localStorage.setItem(storedPortalRoleKey, destinationRole);
 
-      const dashboardData = await loadEmployeeDashboardData(appUserId, employeeProfile);
+      const dashboardData = await loadEmployeeDashboardData(appUserId, employeeProfile, resolvedDebugContext);
       setEmployeeDashboardData(dashboardData);
     } else if (destinationRole === 'line-manager') {
-      const profileData = await loadLineManagerProfileData(appUserId);
+      const profileData = await loadLineManagerProfileData(appUserId, resolvedDebugContext);
       setLineManagerProfileData(profileData);
       setEmployeeDashboardData(undefined);
       setAdminProfileData(undefined);
       setUserRole(destinationRole);
       localStorage.setItem(storedPortalRoleKey, destinationRole);
     } else {
-      const profileData = await loadAdminProfileData(appUserId);
+      const profileData = await loadAdminProfileData(appUserId, resolvedDebugContext);
       setAdminProfileData(profileData);
       setEmployeeDashboardData(undefined);
       setLineManagerProfileData(undefined);
@@ -794,9 +957,13 @@ function AppRoutes() {
           return;
         }
 
-        const appUserId = await getCurrentAppUserId();
+        const sessionDebugContext: DashboardDebugContext = {
+          authUserId: data.session.user.id,
+          email: data.session.user.email ?? undefined
+        };
+        const appUserId = await getCurrentAppUserId(sessionDebugContext);
         const preferredRole = getPreferredRoleForPath(location.pathname) ?? getStoredPortalRole() ?? undefined;
-        const { destinationRole } = await applyAuthenticatedState(appUserId, preferredRole);
+        const { destinationRole } = await applyAuthenticatedState(appUserId, preferredRole, sessionDebugContext);
         if (isMounted) {
           navigateToPermittedRoute(destinationRole);
         }
@@ -851,7 +1018,7 @@ function AppRoutes() {
 
       await supabase.auth.signOut();
 
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: credentials.email,
         password: credentials.password
       });
@@ -863,9 +1030,14 @@ function AppRoutes() {
         return;
       }
 
+      const loginDebugContext: DashboardDebugContext = {
+        authUserId: signInData.user?.id,
+        email: signInData.user?.email ?? credentials.email,
+        preferredRole: role
+      };
       let appUserId: string;
       try {
-        appUserId = await getCurrentAppUserId();
+        appUserId = await getCurrentAppUserId(loginDebugContext);
       } catch (error) {
         toast.error("Employee profile link failed", {
           description: error instanceof Error ? error.message : "No app user was returned."
@@ -876,7 +1048,7 @@ function AppRoutes() {
       let destinationRole: Exclude<UserRole, null>;
       let usedAdminLineManagerFallback = false;
       try {
-        const restoredState = await applyAuthenticatedState(appUserId, role);
+        const restoredState = await applyAuthenticatedState(appUserId, role, loginDebugContext);
         destinationRole = restoredState.destinationRole;
         usedAdminLineManagerFallback = restoredState.usedAdminLineManagerFallback;
         navigate(getDashboardPath(destinationRole), { replace: true });
@@ -884,7 +1056,7 @@ function AppRoutes() {
         await supabase.auth.signOut();
         clearAuthenticatedState();
         navigate("/login", { replace: true });
-        toast.error("Dashboard data could not be loaded", {
+        toast.error(isAccessProfileError(error) ? "Access profile could not be loaded" : "Dashboard data could not be loaded", {
           description: error instanceof Error ? error.message : "Please check the user profile setup."
         });
         return;

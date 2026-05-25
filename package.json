@@ -6,7 +6,10 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "audit:users": "node scripts/audit-supabase-users.mjs"
+    "audit:users": "node scripts/audit-supabase-users.mjs",
+    "seed:auth-users": "node scripts/seed-test-auth-users.mjs",
+    "repair:admin-auth": "node scripts/repair-admin-auth.mjs",
+    "cleanup:test-auth-users": "node scripts/cleanup-test-auth-users.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
