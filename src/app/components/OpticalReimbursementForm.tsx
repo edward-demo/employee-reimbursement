@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -21,6 +21,7 @@ import {
   X,
   Edit2
 } from "lucide-react";
+import type { EmployeeDashboardData } from "./EmployeeDashboard";
 
 interface OpticalItem {
   id: string;
@@ -39,10 +40,23 @@ interface ReceiptFile {
 
 interface OpticalReimbursementFormProps {
   onBack: () => void;
-  onSubmit: () => void;
+  onSubmit: (payload: {
+    category: "optical";
+    items: Array<Pick<OpticalItem, "name" | "quantity" | "unitPrice" | "subtotal">>;
+    prescriptionFiles: File[];
+    receipts: Array<Pick<ReceiptFile, "file" | "invoiceNumber">>;
+    notes: string;
+  }) => Promise<void>;
+  employeeProfile?: Pick<EmployeeDashboardData["employee"], "name" | "id" | "department">;
 }
 
-export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursementFormProps) {
+const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_FILE_SIZE_LABEL = "10MB";
+const ACCEPTED_UPLOAD_MIME_TYPES = ["application/pdf", "image/png", "image/jpeg"];
+const ACCEPTED_UPLOAD_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg"];
+type UploadPanel = "prescription" | "receipt";
+
+export function OpticalReimbursementForm({ onBack, onSubmit, employeeProfile }: OpticalReimbursementFormProps) {
   const [opticalItems, setOpticalItems] = useState<OpticalItem[]>([
     { id: '1', name: '', quantity: '', unitPrice: '', subtotal: 0 }
   ]);
@@ -51,28 +65,95 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
   const [prescriptionFiles, setPrescriptionFiles] = useState<File[]>([]);
   const [receipts, setReceipts] = useState<ReceiptFile[]>([]);
   const [isConfirmed, setIsConfirmed] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dragOverPanel, setDragOverPanel] = useState<UploadPanel | null>(null);
+  const invoiceInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const isSupportedUploadFile = (file: File) => {
+    const fileName = file.name.toLowerCase();
+    return ACCEPTED_UPLOAD_MIME_TYPES.includes(file.type)
+      || ACCEPTED_UPLOAD_EXTENSIONS.some(extension => fileName.endsWith(extension));
+  };
+
+  const getValidatedUploadFiles = (files: File[]) => {
+    const unsupportedFiles = files.filter(file => !isSupportedUploadFile(file));
+    const supportedFiles = files.filter(isSupportedUploadFile);
+    const oversizedFiles = supportedFiles.filter(file => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
+    const validFiles = supportedFiles.filter(file => file.size <= MAX_UPLOAD_FILE_SIZE_BYTES);
+    const errorMessages = [];
+
+    if (unsupportedFiles.length > 0) {
+      errorMessages.push(`${unsupportedFiles.map(file => file.name).join(', ')} must be PDF, PNG, JPG, or JPEG files.`);
+    }
+
+    if (oversizedFiles.length > 0) {
+      errorMessages.push(`${oversizedFiles.map(file => file.name).join(', ')} exceed${oversizedFiles.length === 1 ? 's' : ''} the ${MAX_UPLOAD_FILE_SIZE_LABEL} limit per file.`);
+    }
+
+    setUploadError(errorMessages.join(" "));
+    return validFiles;
+  };
+
+  const hasSupportedDraggedFile = (event: DragEvent<HTMLDivElement>) => (
+    Array.from(event.dataTransfer.items || []).some(item =>
+      item.kind === "file"
+      && (!item.type || ACCEPTED_UPLOAD_MIME_TYPES.includes(item.type))
+    )
+  );
+
+  const handleUploadDragOver = (event: DragEvent<HTMLDivElement>, panel: UploadPanel) => {
+    event.preventDefault();
+    const hasSupportedFile = hasSupportedDraggedFile(event);
+    event.dataTransfer.dropEffect = hasSupportedFile ? "copy" : "none";
+    setDragOverPanel(hasSupportedFile ? panel : null);
+  };
+
+  const handleUploadDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDragOverPanel(null);
+    }
+  };
+
+  const handleUploadDrop = (
+    event: DragEvent<HTMLDivElement>,
+    uploadHandler: (files: File[]) => void
+  ) => {
+    event.preventDefault();
+    setDragOverPanel(null);
+    uploadHandler(Array.from(event.dataTransfer.files || []));
+  };
+
+  const handleUploadPanelKeyDown = (event: KeyboardEvent<HTMLDivElement>, inputId: string) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      document.getElementById(inputId)?.click();
+    }
+  };
 
   const addOpticalItem = () => {
-    const newMedicine: Medicine = {
+    const newOpticalItem: OpticalItem = {
       id: Date.now().toString(),
       name: '',
       quantity: '',
       unitPrice: '',
       subtotal: 0
     };
-    setOpticalItems([...opticalItems, newMedicine]);
+    setOpticalItems([...opticalItems, newOpticalItem]);
   };
 
   const removeOpticalItem = (id: string) => {
-    if (medicines.length > 1) {
-      setMedicines(opticalItems.filter(med => med.id !== id));
+    if (opticalItems.length > 1) {
+      setOpticalItems(opticalItems.filter(item => item.id !== id));
     }
   };
 
-  const updateOpticalItem = (id: string, field: keyof Medicine, value: string) => {
-    setMedicines(opticalItems.map(med => {
-      if (med.id === id) {
-        const updated = { ...med, [field]: value };
+  const updateOpticalItem = (id: string, field: keyof OpticalItem, value: string) => {
+    setOpticalItems(opticalItems.map(item => {
+      if (item.id === id) {
+        const updated = { ...item, [field]: value };
         
         // Calculate subtotal if quantity or unitPrice changed
         if (field === 'quantity' || field === 'unitPrice') {
@@ -83,7 +164,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
         
         return updated;
       }
-      return med;
+      return item;
     }));
   };
 
@@ -92,7 +173,8 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
   };
 
   const handlePrescriptionUpload = (files: File[]) => {
-    const combinedFiles = [...prescriptionFiles, ...files];
+    const validFiles = getValidatedUploadFiles(files);
+    const combinedFiles = [...prescriptionFiles, ...validFiles];
     if (combinedFiles.length <= 3) {
       setPrescriptionFiles(combinedFiles);
     } else {
@@ -104,14 +186,15 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
     setPrescriptionFiles(prescriptionFiles.filter((_, i) => i !== index));
   };
 
-  const handleReceiptUpload = (file: File) => {
-    const newReceipt: ReceiptFile = {
+  const handleReceiptUpload = (files: File[]) => {
+    const validFiles = getValidatedUploadFiles(files);
+    const newReceipts: ReceiptFile[] = validFiles.map((file) => ({
       id: Date.now().toString() + Math.random(),
-      file: file,
+      file,
       invoiceNumber: '',
-      isEditingInvoice: false
-    };
-    setReceipts([...receipts, newReceipt]);
+      isEditingInvoice: true
+    }));
+    setReceipts([...receipts, ...newReceipts]);
   };
 
   const removeReceipt = (id: string) => {
@@ -122,17 +205,73 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
     setReceipts(receipts.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleReceiptInvoiceBlur = (receipt: ReceiptFile) => {
+    if (receipt.invoiceNumber.trim()) {
+      updateReceiptField(receipt.id, 'isEditingInvoice', false);
+    }
+  };
+
+  const handleReceiptInvoiceEdit = (receiptId: string) => {
+    updateReceiptField(receiptId, 'isEditingInvoice', true);
+    window.requestAnimationFrame(() => {
+      invoiceInputRefs.current[receiptId]?.focus();
+    });
+  };
+
+  const handleConfirmationChange = (checked: boolean | "indeterminate") => {
+    setIsConfirmed(checked === true);
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    onSubmit();
+
+    if (!isFormValid() || !hasEmployeeSummaryData || isSubmitting) {
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setSubmitError("");
+      await onSubmit({
+        category: "optical",
+        items: opticalItems.map(({ name, quantity, unitPrice, subtotal }) => ({
+          name,
+          quantity,
+          unitPrice,
+          subtotal
+        })),
+        prescriptionFiles,
+        receipts: receipts.map(({ file, invoiceNumber }) => ({ file, invoiceNumber })),
+        notes
+      });
+    } catch (error) {
+      console.error("Failed to submit optical reimbursement request", error);
+      setSubmitError("Unable to submit request. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const isFormValid = () => {
-    const medicinesValid = opticalItems.every(med => med.name && med.quantity && med.unitPrice);
+    const medicinesValid = opticalItems.every(med =>
+      med.name.trim()
+      && Number(med.quantity) > 0
+      && Number(med.unitPrice) > 0
+      && med.subtotal > 0
+    );
     const documentsValid = prescriptionFiles.length > 0 && receipts.length > 0;
-    const invoicesValid = receipts.every(r => r.invoiceNumber.trim() !== '');
-    return medicinesValid && documentsValid && invoicesValid && isConfirmed;
+    const invoiceNumbers = receipts.map(r => r.invoiceNumber.trim()).filter(Boolean);
+    const invoicesValid = receipts.every(r => r.invoiceNumber.trim() !== '')
+      && new Set(invoiceNumbers).size === invoiceNumbers.length;
+    return medicinesValid && documentsValid && invoicesValid && getTotalAmount() > 0 && isConfirmed === true;
   };
+
+  const employeeName = employeeProfile?.name?.trim();
+  const employeeNumber = employeeProfile?.id?.trim();
+  const employeeDepartment = employeeProfile?.department?.trim();
+  const hasEmployeeSummaryData = Boolean(employeeName && employeeDepartment);
+  const employeeDisplay = employeeNumber ? `${employeeName} (${employeeNumber})` : employeeName;
+  const canSubmit = isFormValid() && hasEmployeeSummaryData && !isSubmitting;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5">
@@ -167,6 +306,13 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {uploadError && (
+                <div className="flex items-start space-x-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <p>{uploadError}</p>
+                </div>
+              )}
+
               {/* Prescription Upload */}
               <div className="space-y-2">
                 <Label className="flex items-center opacity-72">
@@ -198,14 +344,27 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                 )}
 
                 {prescriptionFiles.length < 3 && (
-                  <div className="border-2 border-dashed border-primary/20 rounded-lg p-6 text-center hover:border-primary/40 transition-colors">
+                  <div
+                    className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${
+                      dragOverPanel === "prescription"
+                        ? "border-primary/60 bg-primary/5"
+                        : "border-primary/20 hover:border-primary/40"
+                    }`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => document.getElementById('prescription-upload')?.click()}
+                    onKeyDown={(event) => handleUploadPanelKeyDown(event, 'prescription-upload')}
+                    onDragOver={(event) => handleUploadDragOver(event, "prescription")}
+                    onDragLeave={handleUploadDragLeave}
+                    onDrop={(event) => handleUploadDrop(event, handlePrescriptionUpload)}
+                  >
                     <div className="space-y-2">
                       <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground opacity-72">
+                      <p className="text-sm text-gray-600">
                         Click to upload or drag and drop
                       </p>
-                      <p className="text-xs text-muted-foreground opacity-72">
-                        PDF, PNG, JPG up to 10MB • {3 - prescriptionFiles.length} file{3 - prescriptionFiles.length !== 1 ? 's' : ''} remaining
+                      <p className="text-xs text-gray-600">
+                        PDF, PNG, JPG up to {MAX_UPLOAD_FILE_SIZE_LABEL} • {3 - prescriptionFiles.length} file{3 - prescriptionFiles.length !== 1 ? 's' : ''} remaining
                       </p>
                       <input
                         type="file"
@@ -223,7 +382,11 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => document.getElementById('prescription-upload')?.click()}
+                        className="border-gray-400"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          document.getElementById('prescription-upload')?.click();
+                        }}
                       >
                         {prescriptionFiles.length > 0 ? 'Add More Prescriptions' : 'Choose Files'}
                       </Button>
@@ -266,24 +429,16 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                           <div className="space-y-2">
                             <Label className="text-sm opacity-72">Invoice/Receipt Number *</Label>
                             {receipt.isEditingInvoice || !receipt.invoiceNumber ? (
-                              <div className="flex space-x-2">
-                                <Input
-                                  placeholder="Enter invoice number"
-                                  value={receipt.invoiceNumber}
-                                  onChange={(e) => updateReceiptField(receipt.id, 'invoiceNumber', e.target.value)}
-                                  className="border-primary/30 focus:border-primary placeholder:opacity-72"
-                                />
-                                {receipt.invoiceNumber && (
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => updateReceiptField(receipt.id, 'isEditingInvoice', false)}
-                                  >
-                                    <Check className="h-4 w-4" />
-                                  </Button>
-                                )}
-                              </div>
+                              <Input
+                                ref={(input) => {
+                                  invoiceInputRefs.current[receipt.id] = input;
+                                }}
+                                placeholder="Enter invoice number"
+                                value={receipt.invoiceNumber}
+                                onChange={(e) => updateReceiptField(receipt.id, 'invoiceNumber', e.target.value)}
+                                onBlur={() => handleReceiptInvoiceBlur(receipt)}
+                                className="border-primary/30 bg-white focus:border-primary placeholder:opacity-72"
+                              />
                             ) : (
                               <div className="flex items-center justify-between p-2 bg-white rounded border border-green-300">
                                 <span className="font-medium">{receipt.invoiceNumber}</span>
@@ -291,7 +446,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => updateReceiptField(receipt.id, 'isEditingInvoice', true)}
+                                  onClick={() => handleReceiptInvoiceEdit(receipt.id)}
                                   className="text-primary hover:text-primary/80"
                                 >
                                   <Edit2 className="h-4 w-4" />
@@ -306,14 +461,27 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                 )}
 
                 {/* Upload Area */}
-                <div className="border-2 border-dashed border-primary/20 rounded-lg p-6 text-center hover:border-primary/40 transition-colors">
+                <div
+                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${
+                    dragOverPanel === "receipt"
+                      ? "border-primary/60 bg-primary/5"
+                      : "border-primary/20 hover:border-primary/40"
+                  }`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => document.getElementById('receipt-upload')?.click()}
+                  onKeyDown={(event) => handleUploadPanelKeyDown(event, 'receipt-upload')}
+                  onDragOver={(event) => handleUploadDragOver(event, "receipt")}
+                  onDragLeave={handleUploadDragLeave}
+                  onDrop={(event) => handleUploadDrop(event, handleReceiptUpload)}
+                >
                   <div className="space-y-2">
                     <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-gray-600">
                       Click to upload or drag and drop
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      PDF, PNG, JPG up to 10MB each • Multiple files allowed
+                    <p className="text-xs text-gray-600">
+                      PDF, PNG, JPG up to {MAX_UPLOAD_FILE_SIZE_LABEL} each • Multiple files allowed
                     </p>
                     <input
                       type="file"
@@ -323,7 +491,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                       multiple
                       onChange={(e) => {
                         const filesArray = Array.from(e.target.files || []);
-                        filesArray.forEach(file => handleReceiptUpload(file));
+                        handleReceiptUpload(filesArray);
                         e.target.value = '';
                       }}
                     />
@@ -331,7 +499,11 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => document.getElementById('receipt-upload')?.click()}
+                      className="border-gray-400"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        document.getElementById('receipt-upload')?.click();
+                      }}
                     >
                       {receipts.length > 0 ? 'Add More Receipts' : 'Choose Files'}
                     </Button>
@@ -377,7 +549,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                           <Glasses className="h-4 w-4 text-primary" />
                           <h4 className="font-medium">Item {index + 1}</h4>
                         </div>
-                        {medicines.length > 1 && (
+                        {opticalItems.length > 1 && (
                           <Button
                             type="button"
                             variant="ghost"
@@ -397,7 +569,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                             placeholder="e.g., Eyeglasses, Contact Lenses"
                             value={medicine.name}
                             onChange={(e) => updateOpticalItem(medicine.id, 'name', e.target.value)}
-                            className="border-primary/30 focus:border-primary placeholder:opacity-72"
+                            className="border-primary/30 bg-white focus:border-primary placeholder:opacity-72"
                           />
                         </div>
 
@@ -409,7 +581,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                             step="0.01"
                             value={medicine.quantity}
                             onChange={(e) => updateOpticalItem(medicine.id, 'quantity', e.target.value)}
-                            className="border-primary/30 focus:border-primary placeholder:opacity-72"
+                            className="border-primary/30 bg-white focus:border-primary placeholder:opacity-72"
                           />
                         </div>
 
@@ -421,7 +593,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                             step="0.01"
                             value={medicine.unitPrice}
                             onChange={(e) => updateOpticalItem(medicine.id, 'unitPrice', e.target.value)}
-                            className="border-primary/30 focus:border-primary placeholder:opacity-72"
+                            className="border-primary/30 bg-white focus:border-primary placeholder:opacity-72"
                           />
                         </div>
                       </div>
@@ -446,7 +618,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                   rows={3}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  className="border-primary/20 focus:border-primary placeholder:opacity-72"
+                  className="border-primary/20 bg-white focus:border-primary placeholder:opacity-72"
                 />
               </div>
             </CardContent>
@@ -458,30 +630,34 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
               <CardTitle className="text-secondary">Request Summary</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm text-muted-foreground">Employee</Label>
-                  <p className="font-medium">John Doe (EMP-2024-001)</p>
+              {hasEmployeeSummaryData ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-normal text-gray-500">Employee</Label>
+                    <p className="font-medium">{employeeDisplay}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-normal text-gray-500">Department</Label>
+                    <p className="font-medium">{employeeDepartment}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-normal text-gray-500">Request Date</Label>
+                    <p className="font-medium">{new Date().toLocaleDateString()}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-normal text-gray-500">Total Receipts</Label>
+                    <p className="font-medium">{receipts.length} receipt{receipts.length !== 1 ? 's' : ''}</p>
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-sm text-muted-foreground">Department</Label>
-                  <p className="font-medium">IT Department</p>
-                </div>
-                <div>
-                  <Label className="text-sm text-muted-foreground">Request Date</Label>
-                  <p className="font-medium">{new Date().toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <Label className="text-sm text-muted-foreground">Total Receipts</Label>
-                  <p className="font-medium">{receipts.length} receipt{receipts.length !== 1 ? 's' : ''}</p>
-                </div>
-              </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Unable to retrieve data. Please refresh the page.</p>
+              )}
 
               <Separator />
 
               {/* Documents Summary */}
               <div className="space-y-2">
-                <Label className="text-sm text-muted-foreground">Documents Uploaded:</Label>
+                <Label className="text-sm font-normal text-gray-500">Documents Uploaded:</Label>
                 <div className="bg-white/50 rounded-lg p-3 space-y-2 text-sm">
                   <div>
                     <div className="flex items-center space-x-2 mb-1">
@@ -518,7 +694,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
 
               {/* Medicine Summary */}
               <div className="space-y-2">
-                <Label className="text-sm text-muted-foreground">Optical Items Breakdown ({medicines.length} items):</Label>
+                <Label className="text-sm font-normal text-gray-500">Optical Items Breakdown ({opticalItems.length} items):</Label>
                 <div className="bg-white/50 rounded-lg p-3 space-y-2">
                   {opticalItems.map((medicine, index) => (
                     medicine.name && (
@@ -565,7 +741,7 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
                 <Checkbox
                   id="confirm-checkbox"
                   checked={isConfirmed}
-                  onCheckedChange={(checked) => setIsConfirmed(checked as boolean)}
+                  onCheckedChange={handleConfirmationChange}
                   className="mt-0.5"
                 />
                 <Label
@@ -579,16 +755,21 @@ export function OpticalReimbursementForm({ onBack, onSubmit }: OpticalReimbursem
           </Card>
 
           {/* Action Buttons */}
+          {submitError && (
+            <p className="text-sm text-destructive" role="alert">
+              {submitError}
+            </p>
+          )}
           <div className="flex justify-end space-x-4">
-            <Button type="button" onClick={onBack} variant="outline">
+            <Button type="button" onClick={onBack} variant="outline" disabled={isSubmitting}>
               Cancel
             </Button>
             <Button
               type="submit"
               className="bg-primary hover:bg-primary/90"
-              disabled={!isFormValid()}
+              disabled={!canSubmit}
             >
-              Submit Request
+              {isSubmitting ? "Submitting..." : "Submit Request"}
             </Button>
           </div>
         </form>

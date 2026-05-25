@@ -29,6 +29,8 @@ interface EmployeeDashboardProps {
 
 export interface EmployeeDashboardData {
   employee: {
+    employeeProfileId: string;
+    appUserId: string;
     name: string;
     id: string;
     designation: string;
@@ -65,9 +67,6 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
     employee,
     reimbursementRequests,
     benefitsBalanceError = false,
-    pendingRequestCount,
-    pendingRequestCountError = false,
-    oldestPendingRequestDate,
     recentRequestsLoading = false,
     recentRequestsError = false
   } = dashboardData;
@@ -83,12 +82,19 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
 
   const medicineRemainingBalance = employee.medicineLimit - medicineApprovedAmount;
   const opticalRemainingBalance = employee.opticalLimit - opticalApprovedAmount;
-  const medicineUsagePercent = employee.medicineLimit > 0
-    ? Math.min((medicineApprovedAmount / employee.medicineLimit) * 100, 100)
+  const getConsumedBalancePercent = (usedAmount: number, balanceLimit: number) => balanceLimit > 0
+    ? Math.max(0, Math.min((usedAmount / balanceLimit) * 100, 100))
     : 0;
-  const opticalUsagePercent = employee.opticalLimit > 0
-    ? Math.min((opticalApprovedAmount / employee.opticalLimit) * 100, 100)
-    : 0;
+  const medicineUsagePercent = getConsumedBalancePercent(medicineApprovedAmount, employee.medicineLimit);
+  const opticalUsagePercent = getConsumedBalancePercent(opticalApprovedAmount, employee.opticalLimit);
+  const formatCurrencyAmount = (amount: number) => amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const formatWholeCurrencyAmount = (amount: number) => amount.toLocaleString(undefined, {
+    maximumFractionDigits: 0
+  });
+  const pendingRequests = reimbursementRequests.filter((request) => request.status === "pending");
 
   const handleCategorySelect = (category: 'medicine' | 'optical') => {
     setIsCategoryModalOpen(false);
@@ -169,89 +175,57 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
             <TabsTrigger value="overview" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               Overview
             </TabsTrigger>
-            <TabsTrigger value="profile" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              Profile
-            </TabsTrigger>
             <TabsTrigger value="requests" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               My Requests
+            </TabsTrigger>
+            <TabsTrigger value="profile" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              Profile
             </TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
             {/* Quick Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card className="border-l-4 border-l-primary">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">Benefits Balance</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {benefitsBalanceError ? (
-                    <p className="text-sm text-muted-foreground">
-                      Unable to retrieve data. Please refresh the page.
-                    </p>
-                  ) : (
-                    <div className="space-y-6">
-                      {/* Medicine Balance */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-medium text-muted-foreground">Medicine</p>
-                        </div>
-                        <div className="text-3xl font-bold text-primary mb-1">₱{medicineRemainingBalance.toFixed(2)}</div>
-                        <p className="text-sm text-muted-foreground">₱{medicineApprovedAmount.toFixed(2)} used of ₱{employee.medicineLimit.toLocaleString()}</p>
-                        <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary transition-all"
-                            style={{ width: `${medicineUsagePercent}%` }}
-                          ></div>
-                        </div>
-                      </div>
-
-                      <div className="border-t pt-4">
-                        {/* Optical Balance */}
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-medium text-muted-foreground">Optical</p>
-                        </div>
-                        <div className="text-2xl font-bold text-secondary mb-1">₱{opticalRemainingBalance.toFixed(2)}</div>
-                        <p className="text-sm text-muted-foreground">₱{opticalApprovedAmount.toFixed(2)} used of ₱{employee.opticalLimit.toLocaleString()}</p>
-                        <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-secondary transition-all"
-                            style={{ width: `${opticalUsagePercent}%` }}
-                          ></div>
-                        </div>
+            <Card className="rounded-xl border border-primary/10 bg-white shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Benefits Balance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {benefitsBalanceError ? (
+                  <p className="text-sm text-muted-foreground">
+                    Unable to retrieve data. Please refresh the page.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-[1fr_auto_1fr] gap-4 sm:gap-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-600">Medicine</p>
+                      <div className="mt-2 text-2xl font-bold text-primary sm:text-3xl">₱{formatCurrencyAmount(medicineRemainingBalance)}</div>
+                      <p className="mt-1 text-sm text-muted-foreground">₱{formatCurrencyAmount(medicineApprovedAmount)} used of ₱{formatCurrencyAmount(employee.medicineLimit)}</p>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-200">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{ width: `${medicineUsagePercent}%` }}
+                        ></div>
                       </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
 
-              <Card className="border-l-4 border-l-yellow-500">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">Pending Requests</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-4xl font-bold text-yellow-600 mb-2">{pendingRequestCountError ? "N/A" : pendingRequestCount}</div>
-                  <p className="text-sm text-muted-foreground mb-4">Awaiting review or HR approval</p>
-                  {pendingRequestCountError && (
-                    <div className="pt-3 border-t">
-                      <p className="text-sm text-muted-foreground">Unable to retrieve data. Please refresh the page.</p>
+                    <div className="w-px bg-border" aria-hidden="true" />
+
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-600">Optical</p>
+                      <div className="mt-2 text-2xl font-bold text-primary sm:text-3xl">₱{formatCurrencyAmount(opticalRemainingBalance)}</div>
+                      <p className="mt-1 text-sm text-muted-foreground">₱{formatCurrencyAmount(opticalApprovedAmount)} used of ₱{formatCurrencyAmount(employee.opticalLimit)}</p>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-200">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{ width: `${opticalUsagePercent}%` }}
+                        ></div>
+                      </div>
                     </div>
-                  )}
-                  {!pendingRequestCountError && oldestPendingRequestDate && (
-                    <div className="pt-3 border-t">
-                      <p className="text-xs text-muted-foreground">Oldest request</p>
-                      <p className="text-sm font-medium">{oldestPendingRequestDate}</p>
-                    </div>
-                  )}
-                  {!pendingRequestCountError && pendingRequestCount === 0 && (
-                    <div className="pt-3 border-t">
-                      <p className="text-sm text-muted-foreground">No pending requests</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Quick Actions */}
             <Card>
@@ -267,11 +241,22 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
               </CardContent>
             </Card>
 
-	            {/* Recent Requests */}
+	            {/* Pending Requests */}
 	            <Card>
 	              <CardHeader>
-	                <CardTitle>Recent Requests</CardTitle>
-	                <CardDescription>Your latest reimbursement submissions</CardDescription>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+  	                  <CardTitle>Pending Requests</CardTitle>
+  	                  <CardDescription>Your reimbursement requests awaiting review</CardDescription>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setActiveTab("requests")}
+                    >
+                      View All Requests
+                    </Button>
+                  </div>
 	              </CardHeader>
 	              <CardContent>
 	                <div className="space-y-4">
@@ -279,21 +264,21 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
 	                    <p className="text-sm text-muted-foreground">Loading...</p>
 	                  )}
 	                  {recentRequestsError && (
-	                    <p className="text-sm text-muted-foreground">Unable to retrieve recent requests. Please refresh the page.</p>
+	                    <p className="text-sm text-muted-foreground">Unable to retrieve data. Please refresh the page.</p>
 	                  )}
-	                  {!recentRequestsLoading && !recentRequestsError && reimbursementRequests.length === 0 && (
-	                    <p className="text-sm text-muted-foreground">No reimbursement requests yet.</p>
+	                  {!recentRequestsLoading && !recentRequestsError && pendingRequests.length === 0 && (
+	                    <p className="text-sm text-muted-foreground">No pending requests.</p>
 	                  )}
-	                  {!recentRequestsLoading && !recentRequestsError && reimbursementRequests.slice(0, 2).map((request) => (
-	                    <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2">
-                          <h4 className="font-medium">{request.medicineName}</h4>
-                          {getStatusBadge(request.status, request.lineManagerApproved)}
-                        </div>
+	                  {!recentRequestsLoading && !recentRequestsError && pendingRequests.slice(0, 2).map((request) => (
+	                    <div key={request.id} className="flex items-center justify-between gap-4 p-4 border rounded-lg">
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-medium">{request.medicineName}</h4>
                         <p className="text-sm text-muted-foreground">
-                          {request.quantity} • ₱{request.totalPrice} • {request.submittedDate}
+                          ₱{formatWholeCurrencyAmount(request.totalPrice)} • {request.submittedDate}
                         </p>
+                      </div>
+                      <div className="shrink-0">
+                        {getStatusBadge(request.status, request.lineManagerApproved)}
                       </div>
                     </div>
                   ))}
@@ -312,23 +297,23 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium">Full Name</label>
+                    <label className="text-sm font-medium text-gray-500">Full Name</label>
                     <p className="text-lg">{employee.name}</p>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Employee ID</label>
+                    <label className="text-sm font-medium text-gray-500">Employee ID</label>
                     <p className="text-lg">{employee.id}</p>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Designation</label>
+                    <label className="text-sm font-medium text-gray-500">Designation</label>
                     <p className="text-lg">{employee.designation}</p>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Department</label>
+                    <label className="text-sm font-medium text-gray-500">Department</label>
                     <p className="text-lg">{employee.department}</p>
                   </div>
                   <div className="md:col-span-2">
-                    <label className="text-sm font-medium">Email Address</label>
+                    <label className="text-sm font-medium text-gray-500">Email Address</label>
                     <p className="text-lg">{employee.email}</p>
                   </div>
                 </div>
@@ -350,48 +335,61 @@ export function EmployeeDashboard({ onLogout, onNewRequest, onNewOpticalRequest,
             </div>
 
             <div className="space-y-4">
-              {reimbursementRequests.length === 0 && (
+              {recentRequestsError && (
+                <Card className="border-2 border-primary/10">
+                  <CardContent className="p-6">
+                    <p className="text-sm text-muted-foreground">Unable to retrieve data. Please refresh the page.</p>
+                  </CardContent>
+                </Card>
+              )}
+              {!recentRequestsError && reimbursementRequests.length === 0 && (
                 <Card className="border-2 border-primary/10">
                   <CardContent className="p-6">
                     <p className="text-sm text-muted-foreground">No reimbursement requests yet.</p>
                   </CardContent>
                 </Card>
               )}
-              {reimbursementRequests.map((request) => (
-                <Card key={request.id} className="border-2 border-primary/10">
-                  <CardContent className="p-6">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-lg font-semibold">{request.medicineName}</h3>
-                        <p className="text-sm text-muted-foreground">Request ID: {request.id}</p>
+              {!recentRequestsError && reimbursementRequests.map((request) => {
+                const requestCardAccentClass = request.category === "optical"
+                  ? "border-l-blue-500"
+                  : "border-l-purple-500";
+
+                return (
+                  <Card key={request.id} className={`border-2 border-l-4 border-primary/10 ${requestCardAccentClass}`}>
+                    <CardContent className="p-6">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h3 className="text-lg font-semibold">{request.medicineName}</h3>
+                          <p className="text-sm text-muted-foreground">Request ID: {request.id}</p>
+                        </div>
+                        {getStatusBadge(request.status, request.lineManagerApproved)}
                       </div>
-                      {getStatusBadge(request.status, request.lineManagerApproved)}
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Quantity</label>
-                        <p>{request.quantity}</p>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Quantity</label>
+                          <p>{request.quantity}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Total Amount</label>
+                          <p className="font-semibold">₱{request.totalPrice}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Submitted Date</label>
+                          <p>{request.submittedDate}</p>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Total Amount</label>
-                        <p className="font-semibold">₱{request.totalPrice}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Submitted Date</label>
-                        <p>{request.submittedDate}</p>
-                      </div>
-                    </div>
-                    
-                    {request.remarks && (
-                      <div className="bg-muted/20 p-3 rounded-md">
-                        <label className="text-sm font-medium text-muted-foreground">Remarks</label>
-                        <p className="text-sm">{request.remarks}</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                      
+                      {request.remarks && (
+                        <div className="bg-muted/20 p-3 rounded-md">
+                          <label className="text-sm font-medium text-muted-foreground">Remarks</label>
+                          <p className="text-sm">{request.remarks}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </TabsContent>
         </Tabs>

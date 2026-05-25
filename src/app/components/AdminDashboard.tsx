@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -37,10 +37,46 @@ import {
   FilterX
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "./ui/avatar";
+import { supabase } from "../../lib/supabase";
 
 interface AdminDashboardProps {
   onLogout: () => void;
 }
+
+type ReimbursementCategory = "medicine" | "optical";
+
+interface AdminOverviewCategoryMetrics {
+  approved: number;
+  pending: number;
+  denied: number;
+  totalReimbursed: number;
+}
+
+type AdminOverviewMetrics = Record<ReimbursementCategory, AdminOverviewCategoryMetrics>;
+
+interface AdminOverviewRequestRow {
+  category: ReimbursementCategory;
+  status: string;
+  current_review_stage: string;
+  claim_amount: number | string | null;
+}
+
+const adminOverviewErrorMessage = "Unable to retrieve data. Please refresh the page.";
+
+const createEmptyOverviewMetrics = (): AdminOverviewMetrics => ({
+  medicine: {
+    approved: 0,
+    pending: 0,
+    denied: 0,
+    totalReimbursed: 0
+  },
+  optical: {
+    approved: 0,
+    pending: 0,
+    denied: 0,
+    totalReimbursed: 0
+  }
+});
 
 export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState("overview");
@@ -52,6 +88,9 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isDenyDialogOpen, setIsDenyDialogOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ type: 'prescription' | 'receipt', name: string, index?: number } | null>(null);
+  const [overviewMetrics, setOverviewMetrics] = useState<AdminOverviewMetrics | null>(null);
+  const [isOverviewLoading, setIsOverviewLoading] = useState(true);
+  const [overviewError, setOverviewError] = useState("");
 
   const admin = {
     name: "Patricia Gonzales",
@@ -60,6 +99,72 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     designation: "HR Manager",
     department: "HR Department",
   };
+
+  const loadReimbursementOverview = useCallback(async () => {
+    if (!supabase) {
+      setOverviewMetrics(null);
+      setOverviewError(adminOverviewErrorMessage);
+      setIsOverviewLoading(false);
+      return;
+    }
+
+    setIsOverviewLoading(true);
+    setOverviewError("");
+
+    try {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
+
+      const { data, error } = await supabase
+        .from("reimbursement_requests")
+        .select("category, status, current_review_stage, claim_amount")
+        .gte("submitted_at", monthStart)
+        .lt("submitted_at", nextMonthStart)
+        .in("category", ["medicine", "optical"])
+        .in("status", ["approved", "pending", "denied"]);
+
+      if (error) {
+        throw error;
+      }
+
+      const nextMetrics = createEmptyOverviewMetrics();
+
+      ((data ?? []) as AdminOverviewRequestRow[]).forEach((request) => {
+        const category = request.category;
+        if (category !== "medicine" && category !== "optical") {
+          return;
+        }
+
+        if (request.status === "approved" && request.current_review_stage === "completed") {
+          nextMetrics[category].approved += 1;
+          nextMetrics[category].totalReimbursed += Number(request.claim_amount ?? 0);
+          return;
+        }
+
+        if (request.status === "pending" && request.current_review_stage === "hr_admin_review") {
+          nextMetrics[category].pending += 1;
+          return;
+        }
+
+        if (request.status === "denied" && request.current_review_stage === "completed") {
+          nextMetrics[category].denied += 1;
+        }
+      });
+
+      setOverviewMetrics(nextMetrics);
+    } catch (error) {
+      console.error("Admin reimbursement overview could not be loaded.", error);
+      setOverviewMetrics(null);
+      setOverviewError(adminOverviewErrorMessage);
+    } finally {
+      setIsOverviewLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadReimbursementOverview();
+  }, [loadReimbursementOverview]);
 
   // Mock data with detailed information
   const stagedPendingRequests = [
@@ -394,20 +499,17 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     optical: departmentStatsOptical[index].totalAmount
   }));
 
-  // Calculate totals for overview
-  const medicineApproved = allRequests.filter(r => r.status === 'approved' && r.category === 'medicine').length;
-  const medicinePending = allRequests.filter(r => r.status === 'pending' && r.category === 'medicine').length;
-  const medicineDenied = allRequests.filter(r => r.status === 'denied' && r.category === 'medicine').length;
+  const displayedOverviewMetrics = overviewMetrics ?? createEmptyOverviewMetrics();
+  const medicineApproved = displayedOverviewMetrics.medicine.approved;
+  const medicinePending = displayedOverviewMetrics.medicine.pending;
+  const medicineDenied = displayedOverviewMetrics.medicine.denied;
 
-  const opticalApproved = allRequests.filter(r => r.status === 'approved' && r.category === 'optical').length;
-  const opticalPending = allRequests.filter(r => r.status === 'pending' && r.category === 'optical').length;
-  const opticalDenied = allRequests.filter(r => r.status === 'denied' && r.category === 'optical').length;
+  const opticalApproved = displayedOverviewMetrics.optical.approved;
+  const opticalPending = displayedOverviewMetrics.optical.pending;
+  const opticalDenied = displayedOverviewMetrics.optical.denied;
 
-  const approvedCount = medicineApproved + opticalApproved;
-  const deniedCount = medicineDenied + opticalDenied;
-
-  const totalMedicineReimbursed = departmentStatsMedicine.reduce((sum, dept) => sum + dept.totalAmount, 0);
-  const totalOpticalReimbursed = departmentStatsOptical.reduce((sum, dept) => sum + dept.totalAmount, 0);
+  const totalMedicineReimbursed = displayedOverviewMetrics.medicine.totalReimbursed;
+  const totalOpticalReimbursed = displayedOverviewMetrics.optical.totalReimbursed;
   const totalReimbursed = totalMedicineReimbursed + totalOpticalReimbursed;
 
   return (
@@ -477,82 +579,94 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <CardDescription>Current month statistics by category</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="border-b-2">
-                          <th className="text-left py-3 px-4 text-sm font-semibold text-muted-foreground"></th>
-                          <th className="text-center py-3 px-4 text-sm font-semibold text-primary">Medicine</th>
-                          <th className="text-center py-3 px-4 text-sm font-semibold text-secondary border-l-2 border-gray-200">Optical</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="border-b hover:bg-green-50/30">
-                          <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
-                            <div className="flex items-center space-x-2">
-                              <CheckCircle className="h-4 w-4 text-green-600" />
-                              <span>Approved</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-4 text-center">
-                            <div className="text-2xl font-bold text-green-600">{medicineApproved}</div>
-                          </td>
-                          <td className="py-4 px-4 text-center border-l-2 border-gray-200">
-                            <div className="text-2xl font-bold text-green-600">{opticalApproved}</div>
-                          </td>
-                        </tr>
-                        <tr className="border-b hover:bg-yellow-50/30">
-                          <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
-                            <div className="flex items-center space-x-2">
-                              <Clock className="h-4 w-4 text-yellow-600" />
-                              <span>Pending</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-4 text-center">
-                            <div className="text-2xl font-bold text-yellow-600">{medicinePending}</div>
-                          </td>
-                          <td className="py-4 px-4 text-center border-l-2 border-gray-200">
-                            <div className="text-2xl font-bold text-yellow-600">{opticalPending}</div>
-                          </td>
-                        </tr>
-                        <tr className="hover:bg-red-50/30">
-                          <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
-                            <div className="flex items-center space-x-2">
-                              <XCircle className="h-4 w-4 text-red-600" />
-                              <span>Denied</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-4 text-center">
-                            <div className="text-2xl font-bold text-red-600">{medicineDenied}</div>
-                          </td>
-                          <td className="py-4 px-4 text-center border-l-2 border-gray-200">
-                            <div className="text-2xl font-bold text-red-600">{opticalDenied}</div>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <Separator />
-
-                  {/* Total Reimbursed by Category */}
-                  <div className="p-4 bg-primary/5 rounded-lg space-y-3">
-                    <p className="text-sm text-center" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Total Reimbursed This Month</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="text-center">
-                        <p className="text-xs mb-1" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Medicine</p>
-                        <div className="flex items-center justify-center space-x-1">
-                          <span className="text-2xl font-bold text-primary">₱{totalMedicineReimbursed.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-xs mb-1" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Optical</p>
-                        <div className="flex items-center justify-center space-x-1">
-                          <span className="text-2xl font-bold text-secondary">₱{totalOpticalReimbursed.toLocaleString()}</span>
-                        </div>
-                      </div>
+                  {isOverviewLoading ? (
+                    <div className="min-h-[286px] flex items-center justify-center" role="status" aria-live="polite">
+                      <p className="text-sm text-muted-foreground">Loading reimbursement data...</p>
                     </div>
-                  </div>
+                  ) : overviewError ? (
+                    <div className="min-h-[286px] flex items-center justify-center text-center" role="alert">
+                      <p className="text-sm text-muted-foreground">{overviewError}</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="border-b-2">
+                              <th className="text-left py-3 px-4 text-sm font-semibold text-muted-foreground"></th>
+                              <th className="text-center py-3 px-4 text-sm font-semibold text-primary">Medicine</th>
+                              <th className="text-center py-3 px-4 text-sm font-semibold text-secondary border-l-2 border-gray-200">Optical</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b hover:bg-green-50/30">
+                              <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
+                                <div className="flex items-center space-x-2">
+                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                                  <span>Approved</span>
+                                </div>
+                              </td>
+                              <td className="py-4 px-4 text-center">
+                                <div className="text-2xl font-bold text-green-600">{medicineApproved}</div>
+                              </td>
+                              <td className="py-4 px-4 text-center border-l-2 border-gray-200">
+                                <div className="text-2xl font-bold text-green-600">{opticalApproved}</div>
+                              </td>
+                            </tr>
+                            <tr className="border-b hover:bg-yellow-50/30">
+                              <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
+                                <div className="flex items-center space-x-2">
+                                  <Clock className="h-4 w-4 text-yellow-600" />
+                                  <span>Pending</span>
+                                </div>
+                              </td>
+                              <td className="py-4 px-4 text-center">
+                                <div className="text-2xl font-bold text-yellow-600">{medicinePending}</div>
+                              </td>
+                              <td className="py-4 px-4 text-center border-l-2 border-gray-200">
+                                <div className="text-2xl font-bold text-yellow-600">{opticalPending}</div>
+                              </td>
+                            </tr>
+                            <tr className="hover:bg-red-50/30">
+                              <td className="py-4 px-4 text-sm font-medium text-muted-foreground">
+                                <div className="flex items-center space-x-2">
+                                  <XCircle className="h-4 w-4 text-red-600" />
+                                  <span>Denied</span>
+                                </div>
+                              </td>
+                              <td className="py-4 px-4 text-center">
+                                <div className="text-2xl font-bold text-red-600">{medicineDenied}</div>
+                              </td>
+                              <td className="py-4 px-4 text-center border-l-2 border-gray-200">
+                                <div className="text-2xl font-bold text-red-600">{opticalDenied}</div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <Separator />
+
+                      {/* Total Reimbursed by Category */}
+                      <div className="p-4 bg-primary/5 rounded-lg space-y-3">
+                        <p className="text-sm text-center" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Total Reimbursed This Month</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="text-center">
+                            <p className="text-xs mb-1" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Medicine</p>
+                            <div className="flex items-center justify-center space-x-1">
+                              <span className="text-2xl font-bold text-primary">₱{totalMedicineReimbursed.toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs mb-1" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Optical</p>
+                            <div className="flex items-center justify-center space-x-1">
+                              <span className="text-2xl font-bold text-secondary">₱{totalOpticalReimbursed.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1236,20 +1350,32 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <CardDescription>Generate monthly reimbursement reports</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4 text-center">
-                    <div className="p-4 bg-primary/5 rounded-lg">
-                      <div className="text-xl font-bold text-primary">₱{totalMedicineReimbursed.toLocaleString()}</div>
-                      <p className="text-sm text-muted-foreground">Medicine</p>
+                  {isOverviewLoading ? (
+                    <div className="p-6 text-center" role="status" aria-live="polite">
+                      <p className="text-sm text-muted-foreground">Loading reimbursement data...</p>
                     </div>
-                    <div className="p-4 bg-secondary/5 rounded-lg">
-                      <div className="text-xl font-bold text-secondary">₱{totalOpticalReimbursed.toLocaleString()}</div>
-                      <p className="text-sm text-muted-foreground">Optical</p>
+                  ) : overviewError ? (
+                    <div className="p-6 text-center" role="alert">
+                      <p className="text-sm text-muted-foreground">{overviewError}</p>
                     </div>
-                  </div>
-                  <div className="p-3 bg-muted/20 rounded-lg text-center border-t">
-                    <div className="text-2xl font-bold">₱{totalReimbursed.toLocaleString()}</div>
-                    <p className="text-sm text-muted-foreground">Total Reimbursed</p>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-4 text-center">
+                        <div className="p-4 bg-primary/5 rounded-lg">
+                          <div className="text-xl font-bold text-primary">₱{totalMedicineReimbursed.toLocaleString()}</div>
+                          <p className="text-sm text-muted-foreground">Medicine</p>
+                        </div>
+                        <div className="p-4 bg-secondary/5 rounded-lg">
+                          <div className="text-xl font-bold text-secondary">₱{totalOpticalReimbursed.toLocaleString()}</div>
+                          <p className="text-sm text-muted-foreground">Optical</p>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-muted/20 rounded-lg text-center border-t">
+                        <div className="text-2xl font-bold">₱{totalReimbursed.toLocaleString()}</div>
+                        <p className="text-sm text-muted-foreground">Total Reimbursed</p>
+                      </div>
+                    </>
+                  )}
                   <div className="space-y-2">
                     <Button className="w-full" variant="outline">
                       <ImageIcon className="h-4 w-4 mr-2" />

@@ -37,6 +37,56 @@ const employeeReimbursementPaths = [
   "/employee/reimbursement/medicine",
   "/employee/reimbursement/optical"
 ];
+const reimbursementDocumentsBucket = "reimbursement-documents";
+const initialReviewStage = "line_manager_review";
+
+type ReimbursementCategory = "medicine" | "optical";
+
+interface ReimbursementSubmitItem {
+  name: string;
+  quantity: string;
+  unitPrice: string;
+  subtotal: number;
+}
+
+interface ReimbursementSubmitReceipt {
+  file: File;
+  invoiceNumber: string;
+}
+
+interface ReimbursementSubmitPayload {
+  category: ReimbursementCategory;
+  items: ReimbursementSubmitItem[];
+  prescriptionFiles: File[];
+  receipts: ReimbursementSubmitReceipt[];
+  notes: string;
+}
+
+const createRequestNumber = (category: ReimbursementCategory) => {
+  const categoryPrefix = category === "medicine" ? "MED" : "OPT";
+  return `REQ-${categoryPrefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+};
+
+const sanitizeStorageFileName = (fileName: string) => (
+  fileName
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 160) || "document"
+);
+
+const getSupportedMimeType = (file: File) => {
+  if (["application/pdf", "image/png", "image/jpeg"].includes(file.type)) {
+    return file.type;
+  }
+
+  const fileName = file.name.toLowerCase();
+  if (fileName.endsWith(".pdf")) return "application/pdf";
+  if (fileName.endsWith(".png")) return "image/png";
+  if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) return "image/jpeg";
+
+  return "";
+};
 
 function ScreenLoadingFallback() {
   return (
@@ -46,7 +96,7 @@ function ScreenLoadingFallback() {
   );
 }
 
-function SessionRestoringFallback() {
+function DashboardSkeletonFallback({ statusMessage }: { statusMessage: string }) {
   return (
     <div
       className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5"
@@ -80,7 +130,7 @@ function SessionRestoringFallback() {
         className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6"
         role="status"
       >
-        <p className="text-sm text-muted-foreground">Restoring session...</p>
+        <p className="text-sm text-muted-foreground">{statusMessage}</p>
 
         <div className="grid w-full grid-cols-3 gap-2 rounded-lg border-2 border-primary/10 bg-white p-1">
           <Skeleton className="h-9 rounded-md bg-primary/15" />
@@ -138,6 +188,125 @@ function SessionRestoringFallback() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function SessionRestoringFallback() {
+  return <DashboardSkeletonFallback statusMessage="Restoring session..." />;
+}
+
+function EmployeeDashboardLoadingFallback() {
+  return <DashboardSkeletonFallback statusMessage="Loading employee dashboard..." />;
+}
+
+function LineManagerDashboardLoadingFallback({ statusMessage = "Loading dashboard..." }: { statusMessage?: string }) {
+  const sidebarCards = [0, 1, 2];
+
+  return (
+    <div
+      className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <header className="bg-white border-b-2 border-primary/10 shadow-sm">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center space-x-4">
+              <Skeleton className="h-10 w-10 rounded-lg bg-primary/20" />
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-36 bg-primary/20" />
+                <Skeleton className="h-3 w-32" />
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <Skeleton className="h-9 w-9 rounded-md" />
+              <Skeleton className="h-10 w-10 rounded-full bg-primary/15" />
+              <div className="hidden md:block space-y-2">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-24" />
+              </div>
+              <Skeleton className="h-9 w-24 rounded-md" />
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8" role="status">
+        <p className="sr-only">{statusMessage}</p>
+
+        <div className="space-y-6">
+          <div className="grid w-full grid-cols-2 gap-1 rounded-[20px] bg-white p-[3px]">
+            <Skeleton className="h-9 rounded-[20px] bg-primary/20" />
+            <Skeleton className="h-9 rounded-[20px]" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="lg:col-span-3 space-y-6">
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                  <div className="space-y-2">
+                    <Skeleton className="h-8 w-64 bg-primary/15" />
+                    <Skeleton className="h-4 w-72" />
+                  </div>
+                  <Skeleton className="h-6 w-24 rounded-full bg-yellow-100" />
+                </div>
+
+                <div className="flex flex-col xl:flex-row gap-3">
+                  <Skeleton className="h-10 flex-1 rounded-md bg-white" />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Skeleton className="h-4 w-4 rounded-sm" />
+                    <Skeleton className="h-10 w-36 rounded-md bg-white" />
+                    <Skeleton className="h-10 w-40 rounded-md bg-white" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <Card className="border-2 border-muted bg-muted/20 shadow-none">
+                  <CardContent className="flex min-h-[236px] flex-col items-center justify-center px-6 py-12 text-center sm:p-14">
+                    <Skeleton className="mb-5 h-16 w-16 rounded-full bg-white" />
+                    <div className="w-full max-w-md space-y-3">
+                      <Skeleton className="mx-auto h-5 w-44 bg-primary/15" />
+                      <div className="space-y-2">
+                        <Skeleton className="mx-auto h-4 w-full" />
+                        <Skeleton className="mx-auto h-4 w-4/5" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            <div className="lg:col-span-1 space-y-6">
+              {sidebarCards.map((card) => (
+                <Card key={card} className={card === 0 ? "border-2 border-yellow-200 bg-yellow-50" : ""}>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-4 rounded-sm bg-primary/15" />
+                      <Skeleton className="h-5 w-32 bg-primary/15" />
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {[0, 1].map((item) => (
+                      <div key={item} className="rounded-lg border border-primary/10 bg-white p-3">
+                        <div className="flex items-start gap-2">
+                          <Skeleton className="h-4 w-4 rounded-full" />
+                          <div className="flex-1 space-y-2">
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-3 w-full" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -243,7 +412,7 @@ function AppRoutes() {
     return Boolean((profile as any).is_line_manager);
   };
 
-  const loadEmployeeDashboardData = async (appUserId: string): Promise<EmployeeDashboardData> => {
+  const getEmployeeDashboardProfile = async (appUserId: string) => {
     if (!supabase) {
       throw new Error("Supabase is not configured.");
     }
@@ -266,9 +435,20 @@ function AppRoutes() {
       throw new Error(profileError?.message ?? "No employee profile is linked to this user.");
     }
 
-    const assignedRoleCodes = await getAssignedRoleCodes(appUserId);
+    return profile;
+  };
 
-    if (!assignedRoleCodes.includes("employee")) {
+  const loadEmployeeDashboardData = async (
+    appUserId: string,
+    validatedProfile?: Awaited<ReturnType<typeof getEmployeeDashboardProfile>>
+  ): Promise<EmployeeDashboardData> => {
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+
+    const profile = validatedProfile ?? await getEmployeeDashboardProfile(appUserId);
+
+    if (!validatedProfile && !(await getAssignedRoleCodes(appUserId)).includes("employee")) {
       throw new Error("This account is not assigned to the Employee portal.");
     }
 
@@ -283,7 +463,16 @@ function AppRoutes() {
 
     const { data: requests, error: requestsError } = await supabase
       .from("reimbursement_requests")
-      .select("request_number, category, status, current_review_stage, submitted_at, claim_amount, notes")
+      .select(`
+        request_number,
+        category,
+        status,
+        current_review_stage,
+        submitted_at,
+        claim_amount,
+        notes,
+        reimbursement_request_items(item_name, sequence_number)
+      `)
       .eq("employee_profile_id", employeeProfileId)
       .order("submitted_at", { ascending: false })
       .limit(10);
@@ -326,10 +515,12 @@ function AppRoutes() {
 
     return {
       employee: {
+        employeeProfileId,
+        appUserId,
         name: (profile as any).full_name,
         id: (profile as any).employee_number,
         designation: (profile as any).designation,
-        department: department?.name ?? "Unassigned",
+        department: department?.name ?? "",
         email: user?.email ?? "",
         medicineLimit: balanceByCategory.get("medicine")?.annualLimit ?? 0,
         opticalLimit: balanceByCategory.get("optical")?.annualLimit ?? 0,
@@ -344,19 +535,31 @@ function AppRoutes() {
         : undefined,
       recentRequestsLoading: false,
       recentRequestsError: Boolean(requestsError),
-      reimbursementRequests: (requests ?? []).map((request: any) => ({
-        id: request.request_number,
-        medicineName: request.category === "optical" ? "Optical Reimbursement" : "Medicine Reimbursement",
-        quantity: request.category === "optical" ? "Optical claim" : "Medicine claim",
-        totalPrice: Number(request.claim_amount ?? 0),
-        submittedDate: request.submitted_at
-          ? new Date(request.submitted_at).toLocaleDateString()
-          : "",
-        status: request.status,
-        lineManagerApproved: request.status === "pending" && request.current_review_stage === "hr_admin_review",
-        category: request.category,
-        remarks: request.notes ?? ""
-      }))
+      reimbursementRequests: (requests ?? []).map((request: any) => {
+        const requestItems = [...(request.reimbursement_request_items ?? [])]
+          .sort((firstItem: any, secondItem: any) => Number(firstItem.sequence_number ?? 0) - Number(secondItem.sequence_number ?? 0));
+        const requestItemNames = requestItems
+          .map((item: any) => item.item_name)
+          .filter(Boolean)
+          .join(", ");
+        const fallbackRequestTitle = request.category === "optical"
+          ? "Optical Reimbursement"
+          : "Medicine Reimbursement";
+
+        return {
+          id: request.request_number,
+          medicineName: requestItemNames || fallbackRequestTitle,
+          quantity: request.category === "optical" ? "Optical claim" : "Medicine claim",
+          totalPrice: Number(request.claim_amount ?? 0),
+          submittedDate: request.submitted_at
+            ? new Date(request.submitted_at).toISOString().slice(0, 10)
+            : "",
+          status: request.status,
+          lineManagerApproved: request.status === "pending" && request.current_review_stage === "hr_admin_review",
+          category: request.category,
+          remarks: request.notes ?? ""
+        };
+      })
     };
   };
 
@@ -499,20 +702,26 @@ function AppRoutes() {
     const { destinationRole, usedAdminLineManagerFallback } = await resolveDestinationRole(appUserId, preferredRole);
 
     if (destinationRole === 'employee') {
-      const dashboardData = await loadEmployeeDashboardData(appUserId);
-      setEmployeeDashboardData(dashboardData);
+      const employeeProfile = await getEmployeeDashboardProfile(appUserId);
+      setEmployeeDashboardData(undefined);
       setLineManagerProfileData(undefined);
+      setUserRole(destinationRole);
+      localStorage.setItem(storedPortalRoleKey, destinationRole);
+
+      const dashboardData = await loadEmployeeDashboardData(appUserId, employeeProfile);
+      setEmployeeDashboardData(dashboardData);
     } else if (destinationRole === 'line-manager') {
       const profileData = await loadLineManagerProfileData(appUserId);
       setLineManagerProfileData(profileData);
       setEmployeeDashboardData(undefined);
+      setUserRole(destinationRole);
+      localStorage.setItem(storedPortalRoleKey, destinationRole);
     } else {
       setEmployeeDashboardData(undefined);
       setLineManagerProfileData(undefined);
+      setUserRole(destinationRole);
+      localStorage.setItem(storedPortalRoleKey, destinationRole);
     }
-
-    setUserRole(destinationRole);
-    localStorage.setItem(storedPortalRoleKey, destinationRole);
 
     return { destinationRole, usedAdminLineManagerFallback };
   };
@@ -631,6 +840,8 @@ function AppRoutes() {
         navigate(getDashboardPath(destinationRole), { replace: true });
       } catch (error) {
         await supabase.auth.signOut();
+        clearAuthenticatedState();
+        navigate("/login", { replace: true });
         toast.error("Dashboard data could not be loaded", {
           description: error instanceof Error ? error.message : "Please check the user profile setup."
         });
@@ -646,9 +857,7 @@ function AppRoutes() {
           description: "You can now review and manage employee requests."
         });
       } else if (destinationRole === 'line-manager') {
-        if (usedAdminLineManagerFallback) {
-          toast.info("You do not have Admin access. Redirecting to the Line Manager Dashboard.");
-        } else {
+        if (!usedAdminLineManagerFallback) {
           toast.success("Line Manager access granted", {
             description: "Review and approve team reimbursement requests."
           });
@@ -676,18 +885,188 @@ function AppRoutes() {
     navigate(getDefaultAuthenticatedPath(userRole));
   };
 
-  const handleSubmitRequest = () => {
+  const refreshEmployeeDashboardData = async () => {
+    const currentEmployee = employeeDashboardData?.employee;
+
+    if (userRole !== "employee" || !currentEmployee?.appUserId) {
+      return false;
+    }
+
+    setEmployeeDashboardData(undefined);
+
+    try {
+      const employeeProfile = await getEmployeeDashboardProfile(currentEmployee.appUserId);
+      const dashboardData = await loadEmployeeDashboardData(currentEmployee.appUserId, employeeProfile);
+      setEmployeeDashboardData(dashboardData);
+      return true;
+    } catch (error) {
+      console.error("Failed to refresh employee dashboard data", error);
+      setEmployeeDashboardData({
+        employee: currentEmployee,
+        benefitsBalanceError: true,
+        pendingRequestCount: 0,
+        pendingRequestCountError: true,
+        recentRequestsLoading: false,
+        recentRequestsError: true,
+        reimbursementRequests: []
+      });
+      return false;
+    }
+  };
+
+  const submitReimbursementRequest = async (payload: ReimbursementSubmitPayload) => {
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+
+    const employee = employeeDashboardData?.employee;
+    if (userRole !== "employee" || !employee?.employeeProfileId || !employee?.appUserId) {
+      throw new Error("Unable to retrieve data. Please refresh the page.");
+    }
+
+    const submittedAt = new Date().toISOString();
+    const requestId = crypto.randomUUID();
+    const totalAmount = payload.items.reduce((total, item) => total + item.subtotal, 0);
+    const notes = payload.notes.trim();
+
+    const { error: requestError } = await supabase
+      .from("reimbursement_requests")
+      .insert({
+        reimbursement_request_id: requestId,
+        request_number: createRequestNumber(payload.category),
+        employee_profile_id: employee.employeeProfileId,
+        category: payload.category,
+        status: "pending",
+        submitted_at: submittedAt,
+        employee_confirmed_at: submittedAt,
+        item_subtotal_amount: totalAmount,
+        pwd_deduction_amount: 0,
+        claim_amount: totalAmount,
+        notes: notes || null,
+        current_review_stage: initialReviewStage
+      });
+
+    if (requestError) {
+      throw requestError;
+    }
+
+    const { error: itemsError } = await supabase
+      .from("reimbursement_request_items")
+      .insert(payload.items.map((item, index) => ({
+        reimbursement_request_id: requestId,
+        item_name: item.name.trim(),
+        quantity: Number(item.quantity),
+        unit_price: Number(item.unitPrice),
+        subtotal_amount: item.subtotal,
+        sequence_number: index + 1
+      })));
+
+    if (itemsError) {
+      throw itemsError;
+    }
+
+    const uploadedDocuments: Array<{
+      reimbursement_document_id: string;
+      reimbursement_request_id: string;
+      document_type: "prescription" | "receipt";
+      file_name: string;
+      mime_type: string;
+      file_size_bytes: number;
+      storage_bucket: string;
+      storage_path: string;
+      uploaded_by_user_id: string;
+    }> = [];
+    const receiptDocumentIds: string[] = [];
+
+    const uploadDocument = async (
+      file: File,
+      documentType: "prescription" | "receipt",
+      sequenceNumber: number
+    ) => {
+      const mimeType = getSupportedMimeType(file);
+      if (!mimeType) {
+        throw new Error(`${file.name} must be a PDF, PNG, JPG, or JPEG file.`);
+      }
+
+      const documentId = crypto.randomUUID();
+      const storagePath = `${employee.appUserId}/${requestId}/${documentType}/${sequenceNumber}-${sanitizeStorageFileName(file.name)}`;
+      const { error: uploadError } = await supabase.storage
+        .from(reimbursementDocumentsBucket)
+        .upload(storagePath, file, {
+          contentType: mimeType,
+          upsert: false
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      uploadedDocuments.push({
+        reimbursement_document_id: documentId,
+        reimbursement_request_id: requestId,
+        document_type: documentType,
+        file_name: file.name,
+        mime_type: mimeType,
+        file_size_bytes: file.size,
+        storage_bucket: reimbursementDocumentsBucket,
+        storage_path: storagePath,
+        uploaded_by_user_id: employee.appUserId
+      });
+
+      return documentId;
+    };
+
+    for (const [index, file] of payload.prescriptionFiles.entries()) {
+      await uploadDocument(file, "prescription", index + 1);
+    }
+
+    for (const [index, receipt] of payload.receipts.entries()) {
+      receiptDocumentIds.push(await uploadDocument(receipt.file, "receipt", index + 1));
+    }
+
+    const { error: documentsError } = await supabase
+      .from("reimbursement_documents")
+      .insert(uploadedDocuments);
+
+    if (documentsError) {
+      throw documentsError;
+    }
+
+    const { error: receiptsError } = await supabase
+      .from("reimbursement_receipts")
+      .insert(payload.receipts.map((receipt, index) => ({
+        reimbursement_request_id: requestId,
+        receipt_document_id: receiptDocumentIds[index],
+        invoice_number: receipt.invoiceNumber.trim(),
+        is_pwd: false,
+        vat_exemption_amount: 0,
+        pwd_discount_amount: 0,
+        sequence_number: index + 1
+      })));
+
+    if (receiptsError) {
+      throw receiptsError;
+    }
+  };
+
+  const handleSubmitRequest = async (payload: ReimbursementSubmitPayload) => {
+    await submitReimbursementRequest(payload);
+    const dashboardRefresh = refreshEmployeeDashboardData();
     toast.success("Reimbursement request submitted!", {
       description: "Your request has been sent for review. You'll be notified once it's processed."
     });
     navigate("/employee");
+    await dashboardRefresh;
   };
 
-  const handleSubmitOpticalRequest = () => {
+  const handleSubmitOpticalRequest = async (payload: ReimbursementSubmitPayload) => {
+    await submitReimbursementRequest(payload);
+    const dashboardRefresh = refreshEmployeeDashboardData();
     toast.success("Optical reimbursement request submitted!", {
       description: "Your request has been sent for review. You'll be notified once it's processed."
     });
     navigate("/employee");
+    await dashboardRefresh;
   };
 
   const renderUnauthorizedRedirect = () => (
@@ -700,14 +1079,16 @@ function AppRoutes() {
     }
 
     return employeeDashboardData ? (
-      <EmployeeDashboard
-        onLogout={handleLogout}
-        onNewRequest={handleNewRequest}
-        onNewOpticalRequest={handleNewOpticalRequest}
-        dashboardData={employeeDashboardData}
-      />
+      <Suspense fallback={<EmployeeDashboardLoadingFallback />}>
+        <EmployeeDashboard
+          onLogout={handleLogout}
+          onNewRequest={handleNewRequest}
+          onNewOpticalRequest={handleNewOpticalRequest}
+          dashboardData={employeeDashboardData}
+        />
+      </Suspense>
     ) : (
-      <ScreenLoadingFallback />
+      <EmployeeDashboardLoadingFallback />
     );
   };
 
@@ -720,6 +1101,7 @@ function AppRoutes() {
       <ReimbursementForm
         onBack={handleBackToDashboard}
         onSubmit={handleSubmitRequest}
+        employeeProfile={employeeDashboardData?.employee}
       />
     );
   };
@@ -733,6 +1115,7 @@ function AppRoutes() {
       <OpticalReimbursementForm
         onBack={handleBackToDashboard}
         onSubmit={handleSubmitOpticalRequest}
+        employeeProfile={employeeDashboardData?.employee}
       />
     );
   };
@@ -756,18 +1139,25 @@ function AppRoutes() {
         profileData={lineManagerProfileData}
       />
     ) : (
-      <ScreenLoadingFallback />
+      <LineManagerDashboardLoadingFallback />
     );
   };
+
+  const routeLoadingFallback = location.pathname === "/line-manager"
+    ? <LineManagerDashboardLoadingFallback />
+    : <ScreenLoadingFallback />;
+  const sessionLoadingFallback = location.pathname === "/line-manager" || localStorage.getItem(storedPortalRoleKey) === "line-manager"
+    ? <LineManagerDashboardLoadingFallback statusMessage="Restoring session..." />
+    : <SessionRestoringFallback />;
 
   return (
     <div className="min-h-screen">
       {isRestoringSession && (
-        <SessionRestoringFallback />
+        sessionLoadingFallback
       )}
 
       {!isRestoringSession && (
-        <Suspense fallback={<ScreenLoadingFallback />}>
+        <Suspense fallback={routeLoadingFallback}>
           <Routes>
             <Route path="/" element={<Navigate to={getDefaultAuthenticatedPath(userRole)} replace />} />
             <Route path="/login" element={userRole ? <Navigate to={getDashboardPath(userRole)} replace /> : <LoginScreen onLogin={handleLogin} />} />
