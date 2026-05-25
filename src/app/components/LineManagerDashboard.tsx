@@ -61,6 +61,13 @@ interface LineManagerDocument {
   storagePath: string | null;
 }
 
+interface PreviewDocumentState extends LineManagerDocument {
+  label: string;
+  url: string | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
 interface LineManagerRequest {
   id: string;
   requestId: string;
@@ -108,6 +115,25 @@ const formatCategory = (category: string) => {
 const formatSubmittedDate = (dateValue: string | null) => (
   dateValue ? new Date(dateValue).toISOString().slice(0, 10) : ""
 );
+
+const getDocumentExtension = (fileName: string) => (
+  fileName.split(".").pop()?.toLowerCase() ?? ""
+);
+
+const getDocumentPreviewKind = (uploadedDocument: Pick<LineManagerDocument, "fileName" | "mimeType">) => {
+  const mimeType = uploadedDocument.mimeType?.toLowerCase() ?? "";
+  const extension = getDocumentExtension(uploadedDocument.fileName);
+
+  if (mimeType.startsWith("image/") || ["jpg", "jpeg", "png", "webp"].includes(extension)) {
+    return "image";
+  }
+
+  if (mimeType === "application/pdf" || extension === "pdf") {
+    return "pdf";
+  }
+
+  return "unsupported";
+};
 
 const lineManagerReviewStages = ["line_manager_review"];
 const hrAdminReviewStages = ["hr_admin_review"];
@@ -160,6 +186,7 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isDeclineOpen, setIsDeclineOpen] = useState(false);
+  const [previewDocument, setPreviewDocument] = useState<PreviewDocumentState | null>(null);
   const [declineReason, setDeclineReason] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState("all");
@@ -273,6 +300,7 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
         .select(`
             reimbursement_request_id,
             request_number,
+            request_reference_number,
             employee_profile_id,
             category,
             status,
@@ -305,6 +333,7 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
         .select(`
             reimbursement_request_id,
             request_number,
+            request_reference_number,
             employee_profile_id,
             category,
             status,
@@ -491,7 +520,7 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
           }))
         ];
         return {
-          id: request.request_number,
+          id: request.request_reference_number ?? request.request_number,
           requestId: request.reimbursement_request_id,
           ...employee,
           requestDate: formatSubmittedDate(request.submitted_at ?? null),
@@ -515,7 +544,7 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
         };
 
         return {
-          id: request.request_number,
+          id: request.request_reference_number ?? request.request_number,
           requestId: request.reimbursement_request_id,
           employeeName: employee.employeeName,
           amount: Number(request.claim_amount ?? 0),
@@ -940,13 +969,34 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
     return data.signedUrl;
   };
 
-  const handlePreviewDocument = async (uploadedDocument: LineManagerDocument) => {
+  const handlePreviewDocument = async (uploadedDocument: LineManagerDocument, label: string) => {
+    setPreviewDocument({
+      ...uploadedDocument,
+      label,
+      url: null,
+      isLoading: true,
+      error: null
+    });
+
     try {
       const signedUrl = await createDocumentSignedUrl(uploadedDocument);
-      window.open(signedUrl, "_blank", "noopener,noreferrer");
+      setPreviewDocument((currentPreview) => (
+        currentPreview?.id === uploadedDocument.id
+          ? { ...currentPreview, url: signedUrl, isLoading: false, error: null }
+          : currentPreview
+      ));
     } catch (error) {
-      console.error("Document preview could not be opened.", error);
-      window.alert("This document could not be previewed right now. Please try again.");
+      console.error("Document preview could not be loaded.", error);
+      setPreviewDocument((currentPreview) => (
+        currentPreview?.id === uploadedDocument.id
+          ? {
+            ...currentPreview,
+            url: null,
+            isLoading: false,
+            error: "Unable to load document preview. Please try again or download the file."
+          }
+          : currentPreview
+      ));
     }
   };
 
@@ -965,6 +1015,106 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
       window.alert("This document could not be downloaded right now. Please try again.");
     }
   };
+
+  const renderDocumentPreviewContent = (documentToPreview: PreviewDocumentState) => {
+    if (documentToPreview.isLoading) {
+      return (
+        <div className="flex min-h-[420px] items-center justify-center rounded-lg bg-gray-100 p-6 text-center">
+          <p className="text-sm text-muted-foreground">Loading document preview...</p>
+        </div>
+      );
+    }
+
+    if (documentToPreview.error) {
+      return (
+        <div className="flex min-h-[420px] items-center justify-center rounded-lg bg-gray-100 p-6 text-center">
+          <p className="text-sm text-muted-foreground">{documentToPreview.error}</p>
+        </div>
+      );
+    }
+
+    const previewKind = getDocumentPreviewKind(documentToPreview);
+
+    if (!documentToPreview.url || previewKind === "unsupported") {
+      return (
+        <div className="flex min-h-[420px] items-center justify-center rounded-lg bg-gray-100 p-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Preview is not available for this file type. Please download the document.
+          </p>
+        </div>
+      );
+    }
+
+    if (previewKind === "image") {
+      return (
+        <div className="flex max-h-[520px] min-h-[420px] items-center justify-center overflow-auto rounded-lg bg-gray-100 p-4">
+          <img
+            src={documentToPreview.url}
+            alt={`${documentToPreview.label} preview`}
+            className="max-h-full max-w-full object-contain"
+            onError={() => {
+              setPreviewDocument((currentPreview) => (
+                currentPreview?.id === documentToPreview.id
+                  ? {
+                    ...currentPreview,
+                    error: "Unable to load document preview. Please try again or download the file."
+                  }
+                  : currentPreview
+              ));
+            }}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <iframe
+        title={`${documentToPreview.label} preview`}
+        src={documentToPreview.url}
+        className="h-[520px] w-full rounded-lg border bg-white"
+        onError={() => {
+          setPreviewDocument((currentPreview) => (
+            currentPreview?.id === documentToPreview.id
+              ? {
+                ...currentPreview,
+                error: "Unable to load document preview. Please try again or download the file."
+              }
+              : currentPreview
+          ));
+        }}
+      />
+    );
+  };
+
+  const renderDocumentPreviewPanel = (documentToPreview: PreviewDocumentState, isMobile = false) => (
+    <div className={isMobile ? "space-y-4" : "space-y-4"}>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-lg">Document Preview</h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setPreviewDocument(null)}
+        >
+          <XCircle className="h-4 w-4" />
+        </Button>
+      </div>
+      <div>
+        <p className="font-medium text-gray-700">{documentToPreview.label}</p>
+        <p className="text-sm text-gray-500">{documentToPreview.fileName}</p>
+      </div>
+      {renderDocumentPreviewContent(documentToPreview)}
+      <Button
+        variant="outline"
+        size="sm"
+        className={isMobile ? "w-full" : ""}
+        onClick={() => void handleDownloadDocument(documentToPreview)}
+        disabled={!documentToPreview.storagePath}
+      >
+        <Download className="h-4 w-4 mr-2" />
+        Download Document
+      </Button>
+    </div>
+  );
 
   const getTypeBadge = (category: string) => {
     const isOpticalCategory = category.toLowerCase() === "optical";
@@ -1414,8 +1564,13 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
       </main>
 
       {/* Request Details Modal */}
-      <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-        <DialogContent className="w-full sm:min-w-[860px] sm:max-w-[860px] max-h-[90vh] overflow-y-auto">
+      <Dialog open={isDetailsOpen} onOpenChange={(open) => {
+        setIsDetailsOpen(open);
+        if (!open) {
+          setPreviewDocument(null);
+        }
+      }}>
+        <DialogContent className={`w-full ${previewDocument ? "sm:min-w-[1120px] sm:max-w-[1120px]" : "sm:min-w-[860px] sm:max-w-[860px]"} max-h-[90vh] overflow-hidden`}>
           <DialogHeader>
             <DialogTitle>Reimbursement Request Details</DialogTitle>
             <DialogDescription>
@@ -1424,7 +1579,8 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
           </DialogHeader>
 
           {selectedRequest && (
-            <div className="space-y-6">
+            <div className={`${previewDocument ? "sm:grid sm:grid-cols-[minmax(0,1fr)_420px] sm:gap-6" : ""} max-h-[calc(90vh-120px)] overflow-y-auto`}>
+              <div className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">Employee Information</CardTitle>
@@ -1493,7 +1649,7 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
                             variant="outline"
                             size="sm"
                             className="flex-1"
-                            onClick={() => void handlePreviewDocument(uploadedDocument)}
+                            onClick={() => void handlePreviewDocument(uploadedDocument, documentLabel)}
                             disabled={!uploadedDocument.storagePath}
                           >
                             <Eye className="h-4 w-4 mr-2" />
@@ -1622,6 +1778,19 @@ export function LineManagerDashboard({ onLogout, profileData }: LineManagerDashb
                       {approvingRequestId === selectedRequest.requestId ? "Signing Off..." : "Sign Off for HR/Admin Review"}
                     </Button>
                   </div>
+                </div>
+              )}
+              </div>
+
+              {previewDocument && (
+                <div className="hidden sm:block sm:border-l sm:pl-6">
+                  {renderDocumentPreviewPanel(previewDocument)}
+                </div>
+              )}
+
+              {previewDocument && (
+                <div className="sm:hidden fixed inset-0 bg-white z-50 p-6 overflow-y-auto">
+                  {renderDocumentPreviewPanel(previewDocument, true)}
                 </div>
               )}
             </div>

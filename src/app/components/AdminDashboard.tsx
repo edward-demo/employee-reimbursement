@@ -41,6 +41,15 @@ import { supabase } from "../../lib/supabase";
 
 interface AdminDashboardProps {
   onLogout: () => void;
+  adminProfile: AdminProfileData;
+}
+
+export interface AdminProfileData {
+  name: string;
+  id: string;
+  designation: string;
+  department: string;
+  email: string;
 }
 
 type ReimbursementCategory = "medicine" | "optical";
@@ -59,9 +68,378 @@ interface AdminOverviewRequestRow {
   status: string;
   current_review_stage: string;
   claim_amount: number | string | null;
+  employee_profiles?: {
+    departments?: { name?: string | null } | { name?: string | null }[] | null;
+  } | {
+    departments?: { name?: string | null } | { name?: string | null }[] | null;
+  }[] | null;
+}
+
+interface AdminRecentActivityRow {
+  reimbursement_request_id: string;
+  request_number: string | null;
+  request_reference_number: string | null;
+  category: ReimbursementCategory;
+  status: string;
+  current_review_stage: string;
+  submitted_at: string;
+  claim_amount: number | string | null;
+  employee_profiles?: {
+    full_name?: string | null;
+  } | {
+    full_name?: string | null;
+  }[] | null;
+}
+
+interface AdminRequestRow {
+  reimbursement_request_id: string;
+  request_number: string | null;
+  request_reference_number: string | null;
+  employee_profile_id: string;
+  category: ReimbursementCategory;
+  status: string;
+  current_review_stage: string;
+  submitted_at: string;
+  claim_amount: number | string | null;
+  notes: string | null;
+  employee_profiles?: {
+    employee_number?: string | null;
+    full_name?: string | null;
+    designation?: string | null;
+    departments?: { name?: string | null } | { name?: string | null }[] | null;
+  } | {
+    employee_number?: string | null;
+    full_name?: string | null;
+    designation?: string | null;
+    departments?: { name?: string | null } | { name?: string | null }[] | null;
+  }[] | null;
+}
+
+interface AdminRequestItemRow {
+  reimbursement_request_item_id: string;
+  reimbursement_request_id: string;
+  item_name: string;
+  quantity: number | string | null;
+  unit_price: number | string | null;
+  subtotal_amount: number | string | null;
+}
+
+interface AdminRequestReceiptRow {
+  reimbursement_receipt_id: string;
+  reimbursement_request_id: string;
+  invoice_number: string;
+  is_pwd: boolean;
+  vat_exemption_amount: number | string | null;
+  pwd_discount_amount: number | string | null;
+  reimbursement_documents?: {
+    reimbursement_document_id?: string | null;
+    file_name?: string | null;
+    mime_type?: string | null;
+    storage_bucket?: string | null;
+    storage_path?: string | null;
+  } | {
+    reimbursement_document_id?: string | null;
+    file_name?: string | null;
+    mime_type?: string | null;
+    storage_bucket?: string | null;
+    storage_path?: string | null;
+  }[] | null;
+}
+
+interface AdminRequestDocumentRow {
+  reimbursement_document_id: string;
+  reimbursement_request_id: string;
+  file_name: string;
+  mime_type: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
+}
+
+interface AdminRequestDecisionRow {
+  reimbursement_request_id: string;
+  decision_reason_text: string | null;
+  decision_reason_code: string | null;
 }
 
 const adminOverviewErrorMessage = "Unable to retrieve data. Please refresh the page.";
+const missingDepartmentLabel = "Unassigned";
+const signedDocumentUrlExpirySeconds = 60 * 5;
+
+interface DepartmentBreakdownRow {
+  department: string;
+  requestCount: number;
+  medicineRequestCount: number;
+  opticalRequestCount: number;
+  medicine: number;
+  optical: number;
+  totalAmount: number;
+}
+
+interface RecentActivityItem {
+  id: string;
+  referenceNumber: string;
+  employeeName: string;
+  category: ReimbursementCategory;
+  submittedDate: string;
+  status: string;
+  currentReviewStage: string;
+  totalPrice: number;
+}
+
+interface AdminRequestUiItem {
+  id: string;
+  name: string;
+  quantity: string;
+  unitPrice: string;
+  subtotal: number;
+}
+
+interface AdminRequestUiReceipt {
+  id: string;
+  fileName: string;
+  invoiceNumber: string;
+  isPWD: boolean;
+  vatExemption: string;
+  pwdDiscount: string;
+  mimeType: string | null;
+  storageBucket: string;
+  storagePath: string | null;
+}
+
+interface AdminRequestUiDocument {
+  id: string;
+  type: "prescription" | "receipt";
+  name: string;
+  fileName: string;
+  mimeType: string | null;
+  storageBucket: string;
+  storagePath: string | null;
+  index?: number;
+}
+
+interface AdminRequestUiModel {
+  id: string;
+  employeeName: string;
+  employeeId: string;
+  department: string;
+  designation: string;
+  submittedDate: string;
+  status: string;
+  currentReviewStage: string;
+  category: ReimbursementCategory;
+  prescription: AdminRequestUiDocument;
+  medicines: AdminRequestUiItem[];
+  receipts: AdminRequestUiReceipt[];
+  notes: string;
+  totalPrice: number;
+  remarks?: string;
+}
+
+interface AdminPreviewDocumentState extends AdminRequestUiDocument {
+  url: string | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+const getRelatedRecord = <T,>(value: T | T[] | null | undefined): T | null => {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value ?? null;
+};
+
+const getRequestDepartmentName = (request: AdminOverviewRequestRow) => {
+  const employeeProfile = getRelatedRecord(request.employee_profiles);
+  const department = getRelatedRecord(employeeProfile?.departments);
+  const departmentName = department?.name?.trim();
+
+  return departmentName || missingDepartmentLabel;
+};
+
+const isApprovedByHr = (request: AdminOverviewRequestRow) => (
+  request.status === "approved" && request.current_review_stage === "completed"
+);
+
+const createDepartmentBreakdown = (requests: AdminOverviewRequestRow[]): DepartmentBreakdownRow[] => {
+  const breakdownByDepartment = new Map<string, DepartmentBreakdownRow>();
+
+  requests.forEach((request) => {
+    if (!isApprovedByHr(request) || (request.category !== "medicine" && request.category !== "optical")) {
+      return;
+    }
+
+    const department = getRequestDepartmentName(request);
+    const amount = Number(request.claim_amount ?? 0);
+    const existing = breakdownByDepartment.get(department) ?? {
+      department,
+      requestCount: 0,
+      medicineRequestCount: 0,
+      opticalRequestCount: 0,
+      medicine: 0,
+      optical: 0,
+      totalAmount: 0
+    };
+
+    existing.requestCount += 1;
+    existing.totalAmount += amount;
+
+    if (request.category === "medicine") {
+      existing.medicineRequestCount += 1;
+      existing.medicine += amount;
+    } else {
+      existing.opticalRequestCount += 1;
+      existing.optical += amount;
+    }
+
+    breakdownByDepartment.set(department, existing);
+  });
+
+  return Array.from(breakdownByDepartment.values())
+    .filter((department) => department.requestCount > 0)
+    .sort((first, second) => second.totalAmount - first.totalAmount || first.department.localeCompare(second.department));
+};
+
+const formatSubmittedDate = (submittedAt: string) => {
+  const submittedDate = new Date(submittedAt);
+
+  if (Number.isNaN(submittedDate.getTime())) {
+    return submittedAt;
+  }
+
+  return submittedDate.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+};
+
+const getDocumentExtension = (fileName: string) => (
+  fileName.split(".").pop()?.toLowerCase() ?? ""
+);
+
+const getDocumentPreviewKind = (uploadedDocument: Pick<AdminRequestUiDocument, "fileName" | "mimeType">) => {
+  const mimeType = uploadedDocument.mimeType?.toLowerCase() ?? "";
+  const extension = getDocumentExtension(uploadedDocument.fileName);
+
+  if (mimeType.startsWith("image/") || ["jpg", "jpeg", "png", "webp"].includes(extension)) {
+    return "image";
+  }
+
+  if (mimeType === "application/pdf" || extension === "pdf") {
+    return "pdf";
+  }
+
+  return "unsupported";
+};
+
+const getCategoryLabel = (category: ReimbursementCategory) => (
+  category === "medicine" ? "Medicine" : "Optical"
+);
+
+const createRecentActivityItems = (requests: AdminRecentActivityRow[]): RecentActivityItem[] => (
+  requests.map((request) => {
+    const employeeProfile = getRelatedRecord(request.employee_profiles);
+
+    return {
+      id: request.reimbursement_request_id,
+      referenceNumber: request.request_reference_number || request.request_number || request.reimbursement_request_id,
+      employeeName: employeeProfile?.full_name?.trim() || "Unknown Employee",
+      category: request.category,
+      submittedDate: formatSubmittedDate(request.submitted_at),
+      status: request.status,
+      currentReviewStage: request.current_review_stage,
+      totalPrice: Number(request.claim_amount ?? 0)
+    };
+  })
+);
+
+const groupByRequestId = <T extends { reimbursement_request_id: string }>(rows: T[]) => {
+  const groupedRows = new Map<string, T[]>();
+
+  rows.forEach((row) => {
+    const requestRows = groupedRows.get(row.reimbursement_request_id) ?? [];
+    requestRows.push(row);
+    groupedRows.set(row.reimbursement_request_id, requestRows);
+  });
+
+  return groupedRows;
+};
+
+const createAdminRequestUiModels = ({
+  requests,
+  items,
+  receipts,
+  prescriptions,
+  decisions
+}: {
+  requests: AdminRequestRow[];
+  items: AdminRequestItemRow[];
+  receipts: AdminRequestReceiptRow[];
+  prescriptions: AdminRequestDocumentRow[];
+  decisions: AdminRequestDecisionRow[];
+}): AdminRequestUiModel[] => {
+  const itemsByRequestId = groupByRequestId(items);
+  const receiptsByRequestId = groupByRequestId(receipts);
+  const prescriptionsByRequestId = groupByRequestId(prescriptions);
+  const decisionsByRequestId = groupByRequestId(decisions);
+
+  return requests.map((request) => {
+    const employeeProfile = getRelatedRecord(request.employee_profiles);
+    const department = getRelatedRecord(employeeProfile?.departments);
+    const requestItems = itemsByRequestId.get(request.reimbursement_request_id) ?? [];
+    const requestReceipts = receiptsByRequestId.get(request.reimbursement_request_id) ?? [];
+    const requestPrescription = prescriptionsByRequestId.get(request.reimbursement_request_id)?.[0];
+    const requestDecision = decisionsByRequestId.get(request.reimbursement_request_id)?.[0];
+    const remarks = requestDecision?.decision_reason_text || requestDecision?.decision_reason_code || undefined;
+
+    return {
+      id: request.request_reference_number || request.request_number || request.reimbursement_request_id,
+      employeeName: employeeProfile?.full_name?.trim() || "Unknown Employee",
+      employeeId: employeeProfile?.employee_number?.trim() || "Unassigned",
+      department: department?.name?.trim() || missingDepartmentLabel,
+      designation: employeeProfile?.designation?.trim() || "Unassigned",
+      submittedDate: formatSubmittedDate(request.submitted_at),
+      status: request.status,
+      currentReviewStage: request.current_review_stage,
+      category: request.category,
+      prescription: {
+        id: requestPrescription?.reimbursement_document_id || `${request.reimbursement_request_id}-prescription`,
+        type: "prescription",
+        name: requestPrescription?.file_name || "No prescription uploaded",
+        fileName: requestPrescription?.file_name || "No prescription uploaded",
+        mimeType: requestPrescription?.mime_type ?? null,
+        storageBucket: requestPrescription?.storage_bucket ?? "reimbursement-documents",
+        storagePath: requestPrescription?.storage_path ?? null
+      },
+      medicines: requestItems.map((item) => ({
+        id: item.reimbursement_request_item_id,
+        name: item.item_name,
+        quantity: Number(item.quantity ?? 0).toLocaleString(),
+        unitPrice: Number(item.unit_price ?? 0).toFixed(2),
+        subtotal: Number(item.subtotal_amount ?? 0)
+      })),
+      receipts: requestReceipts.map((receipt) => {
+        const document = getRelatedRecord(receipt.reimbursement_documents);
+
+        return {
+          id: document?.reimbursement_document_id || receipt.reimbursement_receipt_id,
+          fileName: document?.file_name || "Receipt file",
+          invoiceNumber: receipt.invoice_number,
+          isPWD: receipt.is_pwd,
+          vatExemption: Number(receipt.vat_exemption_amount ?? 0).toFixed(2),
+          pwdDiscount: Number(receipt.pwd_discount_amount ?? 0).toFixed(2),
+          mimeType: document?.mime_type ?? null,
+          storageBucket: document?.storage_bucket ?? "reimbursement-documents",
+          storagePath: document?.storage_path ?? null
+        };
+      }),
+      notes: request.notes ?? "",
+      totalPrice: Number(request.claim_amount ?? 0),
+      remarks
+    };
+  });
+};
 
 const createEmptyOverviewMetrics = (): AdminOverviewMetrics => ({
   medicine: {
@@ -78,7 +456,7 @@ const createEmptyOverviewMetrics = (): AdminOverviewMetrics => ({
   }
 });
 
-export function AdminDashboard({ onLogout }: AdminDashboardProps) {
+export function AdminDashboard({ onLogout, adminProfile }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -87,22 +465,20 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [customDenialReason, setCustomDenialReason] = useState("");
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isDenyDialogOpen, setIsDenyDialogOpen] = useState(false);
-  const [previewDocument, setPreviewDocument] = useState<{ type: 'prescription' | 'receipt', name: string, index?: number } | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<AdminPreviewDocumentState | null>(null);
   const [overviewMetrics, setOverviewMetrics] = useState<AdminOverviewMetrics | null>(null);
+  const [departmentBreakdown, setDepartmentBreakdown] = useState<DepartmentBreakdownRow[]>([]);
+  const [recentActivityRequests, setRecentActivityRequests] = useState<RecentActivityItem[]>([]);
+  const [adminRequests, setAdminRequests] = useState<AdminRequestUiModel[]>([]);
   const [isOverviewLoading, setIsOverviewLoading] = useState(true);
   const [overviewError, setOverviewError] = useState("");
-
-  const admin = {
-    name: "Patricia Gonzales",
-    id: "EMP-2022-008",
-    email: "patricia.gonzales@company.com",
-    designation: "HR Manager",
-    department: "HR Department",
-  };
 
   const loadReimbursementOverview = useCallback(async () => {
     if (!supabase) {
       setOverviewMetrics(null);
+      setDepartmentBreakdown([]);
+      setRecentActivityRequests([]);
+      setAdminRequests([]);
       setOverviewError(adminOverviewErrorMessage);
       setIsOverviewLoading(false);
       return;
@@ -118,7 +494,15 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
       const { data, error } = await supabase
         .from("reimbursement_requests")
-        .select("category, status, current_review_stage, claim_amount")
+        .select(`
+          category,
+          status,
+          current_review_stage,
+          claim_amount,
+          employee_profiles(
+            departments(name)
+          )
+        `)
         .gte("submitted_at", monthStart)
         .lt("submitted_at", nextMonthStart)
         .in("category", ["medicine", "optical"])
@@ -128,15 +512,144 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         throw error;
       }
 
+      const { data: recentActivityData, error: recentActivityError } = await supabase
+        .from("reimbursement_requests")
+        .select(`
+          reimbursement_request_id,
+          request_number,
+          request_reference_number,
+          category,
+          status,
+          current_review_stage,
+          submitted_at,
+          claim_amount,
+          employee_profiles(
+            full_name
+          )
+        `)
+        .eq("status", "pending")
+        .eq("current_review_stage", "hr_admin_review")
+        .in("category", ["medicine", "optical"])
+        .order("submitted_at", { ascending: false })
+        .limit(5);
+
+      if (recentActivityError) {
+        throw recentActivityError;
+      }
+
+      const { data: requestData, error: requestError } = await supabase
+        .from("reimbursement_requests")
+        .select(`
+          reimbursement_request_id,
+          request_number,
+          request_reference_number,
+          employee_profile_id,
+          category,
+          status,
+          current_review_stage,
+          submitted_at,
+          claim_amount,
+          notes,
+          employee_profiles(
+            employee_number,
+            full_name,
+            designation,
+            departments(name)
+          )
+        `)
+        .eq("status", "pending")
+        .eq("current_review_stage", "hr_admin_review")
+        .in("category", ["medicine", "optical"])
+        .order("submitted_at", { ascending: false });
+
+      if (requestError) {
+        throw requestError;
+      }
+
+      const requestRows = (requestData ?? []) as AdminRequestRow[];
+      const requestIds = requestRows.map((request) => request.reimbursement_request_id);
+
+      const { data: requestItemsData, error: requestItemsError } = requestIds.length > 0
+        ? await supabase
+          .from("reimbursement_request_items")
+          .select(`
+            reimbursement_request_item_id,
+            reimbursement_request_id,
+            item_name,
+            quantity,
+            unit_price,
+            subtotal_amount
+          `)
+          .in("reimbursement_request_id", requestIds)
+          .order("sequence_number", { ascending: true })
+        : { data: [], error: null };
+
+      if (requestItemsError) {
+        throw requestItemsError;
+      }
+
+      const { data: requestReceiptsData, error: requestReceiptsError } = requestIds.length > 0
+        ? await supabase
+          .from("reimbursement_receipts")
+          .select(`
+            reimbursement_receipt_id,
+            reimbursement_request_id,
+            invoice_number,
+            is_pwd,
+            vat_exemption_amount,
+            pwd_discount_amount,
+            reimbursement_documents(
+              reimbursement_document_id,
+              file_name,
+              mime_type,
+              storage_bucket,
+              storage_path
+            )
+          `)
+          .in("reimbursement_request_id", requestIds)
+          .order("sequence_number", { ascending: true })
+        : { data: [], error: null };
+
+      if (requestReceiptsError) {
+        throw requestReceiptsError;
+      }
+
+      const { data: requestPrescriptionsData, error: requestPrescriptionsError } = requestIds.length > 0
+        ? await supabase
+          .from("reimbursement_documents")
+          .select("reimbursement_document_id, reimbursement_request_id, file_name, mime_type, storage_bucket, storage_path")
+          .in("reimbursement_request_id", requestIds)
+          .eq("document_type", "prescription")
+          .order("uploaded_at", { ascending: true })
+        : { data: [], error: null };
+
+      if (requestPrescriptionsError) {
+        throw requestPrescriptionsError;
+      }
+
+      const { data: requestDecisionsData, error: requestDecisionsError } = requestIds.length > 0
+        ? await supabase
+          .from("reimbursement_decisions")
+          .select("reimbursement_request_id, decision_reason_text, decision_reason_code")
+          .in("reimbursement_request_id", requestIds)
+          .order("decided_at", { ascending: false })
+        : { data: [], error: null };
+
+      if (requestDecisionsError) {
+        throw requestDecisionsError;
+      }
+
       const nextMetrics = createEmptyOverviewMetrics();
 
-      ((data ?? []) as AdminOverviewRequestRow[]).forEach((request) => {
+      const overviewRequestRows = (data ?? []) as AdminOverviewRequestRow[];
+
+      overviewRequestRows.forEach((request) => {
         const category = request.category;
         if (category !== "medicine" && category !== "optical") {
           return;
         }
 
-        if (request.status === "approved" && request.current_review_stage === "completed") {
+        if (isApprovedByHr(request)) {
           nextMetrics[category].approved += 1;
           nextMetrics[category].totalReimbursed += Number(request.claim_amount ?? 0);
           return;
@@ -153,9 +666,21 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       });
 
       setOverviewMetrics(nextMetrics);
+      setDepartmentBreakdown(createDepartmentBreakdown(overviewRequestRows));
+      setRecentActivityRequests(createRecentActivityItems((recentActivityData ?? []) as AdminRecentActivityRow[]));
+      setAdminRequests(createAdminRequestUiModels({
+        requests: requestRows,
+        items: (requestItemsData ?? []) as AdminRequestItemRow[],
+        receipts: (requestReceiptsData ?? []) as AdminRequestReceiptRow[],
+        prescriptions: (requestPrescriptionsData ?? []) as AdminRequestDocumentRow[],
+        decisions: (requestDecisionsData ?? []) as AdminRequestDecisionRow[]
+      }));
     } catch (error) {
       console.error("Admin reimbursement overview could not be loaded.", error);
       setOverviewMetrics(null);
+      setDepartmentBreakdown([]);
+      setRecentActivityRequests([]);
+      setAdminRequests([]);
       setOverviewError(adminOverviewErrorMessage);
     } finally {
       setIsOverviewLoading(false);
@@ -165,221 +690,6 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   useEffect(() => {
     void loadReimbursementOverview();
   }, [loadReimbursementOverview]);
-
-  // Mock data with detailed information
-  const stagedPendingRequests = [
-    {
-      id: "REQ-004",
-      employeeName: "Maria Santos",
-      employeeId: "EMP-2024-002",
-      department: "Product Development",
-      submittedDate: "2024-01-18",
-      status: "pending",
-      currentReviewStage: "hr_admin_review",
-      category: "medicine",
-      lineManagerName: "Roberto Cruz",
-      prescription: { name: "prescription-004.pdf" },
-      medicines: [
-        { id: "1", name: "Blood Pressure Medication", quantity: "30", unitPrice: "25.00", subtotal: 750.00 },
-        { id: "2", name: "Cholesterol Medication", quantity: "30", unitPrice: "15.00", subtotal: 450.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-004-pharmacy1.pdf",
-          invoiceNumber: "INV-2024-001234",
-          isPWD: false,
-          vatExemption: "",
-          pwdDiscount: ""
-        }
-      ],
-      notes: "Regular monthly medication refill",
-      totalPrice: 1200.00
-    },
-    {
-      id: "REQ-005",
-      employeeName: "Carlos Reyes",
-      employeeId: "EMP-2024-003",
-      department: "Finance",
-      submittedDate: "2024-01-17",
-      status: "pending",
-      currentReviewStage: "line_manager_review",
-      category: "medicine",
-      lineManagerName: "Jennifer Lee",
-      prescription: { name: "prescription-005.pdf" },
-      medicines: [
-        { id: "1", name: "Insulin Injections", quantity: "10", unitPrice: "250.00", subtotal: 2500.00 },
-        { id: "2", name: "Blood Glucose Test Strips", quantity: "100", unitPrice: "8.00", subtotal: 800.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-005-a.pdf",
-          invoiceNumber: "INV-2024-5678",
-          isPWD: true,
-          vatExemption: "200.00",
-          pwdDiscount: "150.00"
-        },
-        {
-          id: "2",
-          fileName: "receipt-005-b.pdf",
-          invoiceNumber: "INV-2024-5679",
-          isPWD: true,
-          vatExemption: "100.00",
-          pwdDiscount: "50.00"
-        }
-      ],
-      notes: "PWD employee - diabetes care supplies purchased from two pharmacies",
-      totalPrice: 2800.00
-    }
-  ];
-
-  const allRequests = [
-    ...stagedPendingRequests,
-    {
-      id: "REQ-001",
-      employeeName: "Juan dela Cruz",
-      employeeId: "EMP-2024-001",
-      department: "IT Helpdesk",
-      submittedDate: "2024-01-15",
-      status: "approved",
-      category: "medicine",
-      approvedBy: "Admin",
-      approvedDate: "2024-01-16",
-      prescription: { name: "prescription-001.pdf" },
-      medicines: [
-        { id: "1", name: "Paracetamol 500mg", quantity: "30", unitPrice: "15.00", subtotal: 450.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-001.pdf",
-          invoiceNumber: "INV-2024-0001",
-          isPWD: false,
-          vatExemption: "",
-          pwdDiscount: ""
-        }
-      ],
-      notes: "Pain relief medication",
-      totalPrice: 450.00,
-      remarks: "Approved by HR. Payment processed."
-    },
-    {
-      id: "REQ-006",
-      employeeName: "Rosa Mendoza",
-      employeeId: "EMP-2024-005",
-      department: "Admin",
-      submittedDate: "2024-01-12",
-      status: "approved",
-      category: "medicine",
-      approvedBy: "Admin",
-      approvedDate: "2024-01-14",
-      prescription: { name: "prescription-006.pdf" },
-      medicines: [
-        { id: "1", name: "Hypertension Medication", quantity: "30", unitPrice: "35.00", subtotal: 1050.00 },
-        { id: "2", name: "Multivitamins", quantity: "60", unitPrice: "12.50", subtotal: 750.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-006.pdf",
-          invoiceNumber: "INV-2024-8888",
-          isPWD: true,
-          vatExemption: "150.00",
-          pwdDiscount: "90.00"
-        }
-      ],
-      notes: "PWD employee - senior citizen discount applied",
-      totalPrice: 1560.00,
-      remarks: "Approved with PWD benefits. Payment processed."
-    },
-    {
-      id: "REQ-003",
-      employeeName: "Ana Garcia",
-      employeeId: "EMP-2024-004",
-      department: "HR",
-      submittedDate: "2024-01-05",
-      status: "denied",
-      category: "medicine",
-      reviewedBy: "Admin",
-      reviewedDate: "2024-01-06",
-      prescription: { name: "prescription-003.pdf" },
-      medicines: [
-        { id: "1", name: "Antibiotic Course", quantity: "21", unitPrice: "40.48", subtotal: 850.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-003.pdf",
-          invoiceNumber: "INV-2023-9999",
-          isPWD: false,
-          vatExemption: "",
-          pwdDiscount: ""
-        }
-      ],
-      notes: "",
-      totalPrice: 850.00,
-      denialReason: "incomplete_details",
-      remarks: "Prescription date exceeds allowed timeframe."
-    },
-    {
-      id: "REQ-007",
-      employeeName: "Maria Santos",
-      employeeId: "EMP-2024-002",
-      department: "Product Development",
-      submittedDate: "2024-01-14",
-      status: "approved",
-      category: "optical",
-      approvedBy: "Admin",
-      approvedDate: "2024-01-15",
-      prescription: { name: "prescription-007.pdf" },
-      medicines: [
-        { id: "1", name: "Prescription Eyeglasses", quantity: "1", unitPrice: "3500.00", subtotal: 3500.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-007.pdf",
-          invoiceNumber: "INV-2024-7777",
-          isPWD: false,
-          vatExemption: "",
-          pwdDiscount: ""
-        }
-      ],
-      notes: "New prescription glasses",
-      totalPrice: 3500.00,
-      remarks: "Approved by HR. Payment processed."
-    },
-    {
-      id: "REQ-008",
-      employeeName: "Carlos Reyes",
-      employeeId: "EMP-2024-003",
-      department: "Finance",
-      submittedDate: "2024-01-10",
-      status: "approved",
-      category: "optical",
-      approvedBy: "Admin",
-      approvedDate: "2024-01-11",
-      prescription: { name: "prescription-008.pdf" },
-      medicines: [
-        { id: "1", name: "Contact Lenses", quantity: "6", unitPrice: "450.00", subtotal: 2700.00 }
-      ],
-      receipts: [
-        {
-          id: "1",
-          fileName: "receipt-008.pdf",
-          invoiceNumber: "INV-2024-6666",
-          isPWD: false,
-          vatExemption: "",
-          pwdDiscount: ""
-        }
-      ],
-      notes: "6-month supply of contact lenses",
-      totalPrice: 2700.00,
-      remarks: "Approved by HR. Payment processed."
-    }
-  ];
-
 
   const getStatusBadge = (status: string, currentReviewStage?: string) => {
     switch (status) {
@@ -434,6 +744,167 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setCustomDenialReason("");
   };
 
+  const createDocumentSignedUrl = async (
+    uploadedDocument: AdminRequestUiDocument,
+    options?: { download?: boolean }
+  ) => {
+    if (!supabase || !uploadedDocument.storagePath) {
+      throw new Error("Document storage details are not available.");
+    }
+
+    const { data, error } = await supabase.storage
+      .from(uploadedDocument.storageBucket)
+      .createSignedUrl(uploadedDocument.storagePath, signedDocumentUrlExpirySeconds, {
+        download: options?.download ? uploadedDocument.fileName : false
+      });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return data.signedUrl;
+  };
+
+  const handlePreviewDocument = async (uploadedDocument: AdminRequestUiDocument) => {
+    setPreviewDocument({
+      ...uploadedDocument,
+      url: null,
+      isLoading: true,
+      error: null
+    });
+
+    try {
+      const signedUrl = await createDocumentSignedUrl(uploadedDocument);
+      setPreviewDocument((currentPreview) => (
+        currentPreview?.id === uploadedDocument.id
+          ? { ...currentPreview, url: signedUrl, isLoading: false, error: null }
+          : currentPreview
+      ));
+    } catch (error) {
+      console.error("Admin document preview could not be loaded.", error);
+      setPreviewDocument((currentPreview) => (
+        currentPreview?.id === uploadedDocument.id
+          ? {
+            ...currentPreview,
+            url: null,
+            isLoading: false,
+            error: "Unable to load document preview. Please try again or download the file."
+          }
+          : currentPreview
+      ));
+    }
+  };
+
+  const handleDownloadDocument = async (uploadedDocument: AdminRequestUiDocument) => {
+    try {
+      const signedUrl = await createDocumentSignedUrl(uploadedDocument, { download: true });
+      const downloadLink = document.createElement("a");
+      downloadLink.href = signedUrl;
+      downloadLink.download = uploadedDocument.fileName;
+      downloadLink.rel = "noopener noreferrer";
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+    } catch (error) {
+      console.error("Admin document download could not be started.", error);
+      window.alert("This document could not be downloaded right now. Please try again.");
+    }
+  };
+
+  const renderDocumentPreviewContent = (documentToPreview: AdminPreviewDocumentState) => {
+    if (documentToPreview.isLoading) {
+      return (
+        <div className="flex min-h-[400px] items-center justify-center rounded-lg bg-gray-100 p-6 text-center">
+          <p className="text-sm text-muted-foreground">Loading document preview...</p>
+        </div>
+      );
+    }
+
+    if (documentToPreview.error) {
+      return (
+        <div className="flex min-h-[400px] items-center justify-center rounded-lg bg-gray-100 p-6 text-center">
+          <p className="text-sm text-muted-foreground">{documentToPreview.error}</p>
+        </div>
+      );
+    }
+
+    const previewKind = getDocumentPreviewKind(documentToPreview);
+
+    if (!documentToPreview.url || previewKind === "unsupported") {
+      return (
+        <div className="flex min-h-[400px] items-center justify-center rounded-lg bg-gray-100 p-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Preview is not available for this file type. Please download the document.
+          </p>
+        </div>
+      );
+    }
+
+    if (previewKind === "image") {
+      return (
+        <div className="flex max-h-[500px] min-h-[400px] items-center justify-center overflow-auto rounded-lg bg-gray-100 p-4">
+          <img
+            src={documentToPreview.url}
+            alt={`${documentToPreview.name} preview`}
+            className="max-h-full max-w-full object-contain"
+            onError={() => {
+              setPreviewDocument((currentPreview) => (
+                currentPreview?.id === documentToPreview.id
+                  ? {
+                    ...currentPreview,
+                    error: "Unable to load document preview. Please try again or download the file."
+                  }
+                  : currentPreview
+              ));
+            }}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <iframe
+        title={`${documentToPreview.name} preview`}
+        src={documentToPreview.url}
+        className="h-[500px] w-full rounded-lg border bg-white"
+      />
+    );
+  };
+
+  const renderDocumentPreviewPanel = (documentToPreview: AdminPreviewDocumentState, isMobile = false) => (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-lg">Document Preview</h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setPreviewDocument(null)}
+        >
+          <XIcon className="h-4 w-4" />
+        </Button>
+      </div>
+      <div>
+        <p className="font-medium text-gray-700">
+          {documentToPreview.type === "prescription"
+            ? "Prescription"
+            : `Receipt ${(documentToPreview.index ?? 0) + 1}`}
+        </p>
+        <p className="text-sm text-gray-500">{documentToPreview.name}</p>
+      </div>
+      {renderDocumentPreviewContent(documentToPreview)}
+      <Button
+        variant="outline"
+        size="sm"
+        className={isMobile ? "w-full" : ""}
+        onClick={() => void handleDownloadDocument(documentToPreview)}
+        disabled={!documentToPreview.storagePath}
+      >
+        <Download className="h-4 w-4 mr-2" />
+        Download Document
+      </Button>
+    </div>
+  );
+
   const getDenialReasonText = (reason: string) => {
     switch (reason) {
       case "duplicate":
@@ -458,7 +929,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     return medicines.reduce((total, med) => total + med.subtotal, 0);
   };
 
-  const filteredRequests = allRequests.filter(request => {
+  const filteredRequests = adminRequests.filter(request => {
     const statusMatch =
       filterStatus === "all" ||
       (filterStatus === "pending_line_manager" && request.status === "pending" && request.currentReviewStage === "line_manager_review") ||
@@ -474,30 +945,6 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   const hasActiveFilters = filterStatus !== "all" || filterDepartment !== "all";
-
-  // Department statistics for charts (Medicine)
-  const departmentStatsMedicine = [
-    { department: "Product Development", approvedCount: 5, totalAmount: 8950, color: "#0B8BCB" },
-    { department: "Finance", approvedCount: 4, totalAmount: 7500, color: "#62C3F3" },
-    { department: "HR", approvedCount: 3, totalAmount: 5800, color: "#B4D3E2" },
-    { department: "Admin", approvedCount: 3, totalAmount: 6400, color: "#9333EA" },
-    { department: "IT Helpdesk", approvedCount: 2, totalAmount: 3550, color: "#C084FC" },
-  ];
-
-  // Department statistics for charts (Optical)
-  const departmentStatsOptical = [
-    { department: "Product Development", approvedCount: 3, totalAmount: 9500, color: "#0B8BCB" },
-    { department: "Finance", approvedCount: 2, totalAmount: 7730, color: "#62C3F3" },
-    { department: "HR", approvedCount: 2, totalAmount: 7000, color: "#B4D3E2" },
-    { department: "Admin", approvedCount: 1, totalAmount: 2500, color: "#9333EA" },
-    { department: "IT Helpdesk", approvedCount: 1, totalAmount: 3000, color: "#C084FC" },
-  ];
-
-  const departmentStatsCombined = departmentStatsMedicine.map((medDept, index) => ({
-    department: medDept.department,
-    medicine: medDept.totalAmount,
-    optical: departmentStatsOptical[index].totalAmount
-  }));
 
   const displayedOverviewMetrics = overviewMetrics ?? createEmptyOverviewMetrics();
   const medicineApproved = displayedOverviewMetrics.medicine.approved;
@@ -531,12 +978,12 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
             <div className="flex items-center space-x-4">
               <Avatar>
                 <AvatarFallback className="bg-primary text-primary-foreground">
-                  {getInitials(admin.name)}
+                  {getInitials(adminProfile.name)}
                 </AvatarFallback>
               </Avatar>
               <div className="text-right">
-                <p className="font-medium">{admin.name}</p>
-                <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>{admin.designation}</p>
+                <p className="font-medium">{adminProfile.name}</p>
+                <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>{adminProfile.designation}</p>
               </div>
               <Button onClick={onLogout} variant="outline" size="sm" style={{ borderColor: 'rgba(0, 0, 0, 0.4)', borderWidth: '1.5px', color: 'rgba(0, 0, 0, 0.8)' }}>
                 <LogOut className="h-4 w-4 mr-2" />
@@ -555,7 +1002,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               Overview
             </TabsTrigger>
             <TabsTrigger value="requests" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground hover:text-primary">
-              Requests ({stagedPendingRequests.length})
+              Requests ({adminRequests.length})
             </TabsTrigger>
             <TabsTrigger value="reports" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground hover:text-primary">
               Reports
@@ -680,54 +1127,68 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <CardDescription>Approved reimbursements by department and category</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-[350px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={departmentStatsCombined}>
-                        <CartesianGrid key="grid-combined" strokeDasharray="3 3" stroke="#B4D3E2" opacity={0.3} />
-                        <XAxis
-                          key="xaxis-combined"
-                          dataKey="department"
-                          tick={{ fill: '#0B8BCB', fontSize: 10 }}
-                          angle={-15}
-                          textAnchor="end"
-                          height={70}
-                        />
-                        <YAxis
-                          key="yaxis-combined"
-                          tick={{ fill: '#0B8BCB', fontSize: 12 }}
-                          label={{ value: 'Amount (₱)', angle: -90, position: 'insideLeft', fill: '#0B8BCB' }}
-                        />
-                        <RechartsTooltip
-                          key="tooltip-combined"
-                          contentStyle={{
-                            backgroundColor: 'white',
-                            border: '2px solid #B4D3E2',
-                            borderRadius: '8px'
-                          }}
-                          formatter={(value: any) => [`₱${value.toLocaleString()}`]}
-                        />
-                        <Legend
-                          key="legend-combined"
-                          wrapperStyle={{ paddingTop: '20px' }}
-                          iconType="rect"
-                        />
-                        <Bar
-                          key="bar-medicine"
-                          dataKey="medicine"
-                          name="Medicine"
-                          fill="#0B8BCB"
-                          radius={[8, 8, 0, 0]}
-                        />
-                        <Bar
-                          key="bar-optical"
-                          dataKey="optical"
-                          name="Optical"
-                          fill="#62C3F3"
-                          radius={[8, 8, 0, 0]}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                  {isOverviewLoading ? (
+                    <div className="h-[350px] flex items-center justify-center" role="status" aria-live="polite">
+                      <p className="text-sm text-muted-foreground">Loading department data...</p>
+                    </div>
+                  ) : overviewError ? (
+                    <div className="h-[350px] flex items-center justify-center text-center" role="alert">
+                      <p className="text-sm text-muted-foreground">{overviewError}</p>
+                    </div>
+                  ) : departmentBreakdown.length === 0 ? (
+                    <div className="h-[350px] flex items-center justify-center text-center">
+                      <p className="text-sm text-muted-foreground">No approved reimbursements found for this month.</p>
+                    </div>
+                  ) : (
+                    <div className="h-[350px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={departmentBreakdown}>
+                          <CartesianGrid key="grid-combined" strokeDasharray="3 3" stroke="#B4D3E2" opacity={0.3} />
+                          <XAxis
+                            key="xaxis-combined"
+                            dataKey="department"
+                            tick={{ fill: '#0B8BCB', fontSize: 10 }}
+                            angle={-15}
+                            textAnchor="end"
+                            height={70}
+                          />
+                          <YAxis
+                            key="yaxis-combined"
+                            tick={{ fill: '#0B8BCB', fontSize: 12 }}
+                            label={{ value: 'Amount (₱)', angle: -90, position: 'insideLeft', fill: '#0B8BCB' }}
+                          />
+                          <RechartsTooltip
+                            key="tooltip-combined"
+                            contentStyle={{
+                              backgroundColor: 'white',
+                              border: '2px solid #B4D3E2',
+                              borderRadius: '8px'
+                            }}
+                            formatter={(value: any) => [`₱${value.toLocaleString()}`]}
+                          />
+                          <Legend
+                            key="legend-combined"
+                            wrapperStyle={{ paddingTop: '20px' }}
+                            iconType="rect"
+                          />
+                          <Bar
+                            key="bar-medicine"
+                            dataKey="medicine"
+                            name="Medicine"
+                            fill="#0B8BCB"
+                            radius={[8, 8, 0, 0]}
+                          />
+                          <Bar
+                            key="bar-optical"
+                            dataKey="optical"
+                            name="Optical"
+                            fill="#62C3F3"
+                            radius={[8, 8, 0, 0]}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -739,24 +1200,38 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <CardDescription>Latest reimbursement requests requiring attention</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {stagedPendingRequests.map((request) => (
-                    <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg bg-yellow-50 border-yellow-200">
-                      <div className="flex-1">
-                        <h4 className="font-medium">{request.employeeName}</h4>
-                        <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>
-                          {request.medicines.length} medicine{request.medicines.length !== 1 ? 's' : ''} • ₱{request.totalPrice} • {request.submittedDate}
-                        </p>
+                {isOverviewLoading ? (
+                  <div className="min-h-[88px] flex items-center justify-center" role="status" aria-live="polite">
+                    <p className="text-sm text-muted-foreground">Loading recent activity...</p>
+                  </div>
+                ) : overviewError ? (
+                  <div className="min-h-[88px] flex items-center justify-center text-center" role="alert">
+                    <p className="text-sm text-muted-foreground">{overviewError}</p>
+                  </div>
+                ) : recentActivityRequests.length === 0 ? (
+                  <div className="min-h-[88px] flex items-center justify-center text-center">
+                    <p className="text-sm text-muted-foreground">No reimbursement requests currently require attention.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {recentActivityRequests.map((request) => (
+                      <div key={request.id} className="flex items-center justify-between p-4 border rounded-lg bg-yellow-50 border-yellow-200">
+                        <div className="flex-1">
+                          <h4 className="font-medium">{request.employeeName}</h4>
+                          <p className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>
+                            {getCategoryLabel(request.category)} • ₱{request.totalPrice.toLocaleString()} • {request.submittedDate}
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {getStatusBadge(request.status, request.currentReviewStage)}
+                          <Button size="sm" variant="outline" onClick={() => setActiveTab("requests")} style={{ borderColor: 'rgba(0, 0, 0, 0.4)', borderWidth: '1.5px', color: 'rgba(0, 0, 0, 0.8)' }}>
+                            Review
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        {getStatusBadge(request.status, request.currentReviewStage)}
-                        <Button size="sm" variant="outline" onClick={() => setActiveTab("requests")} style={{ borderColor: 'rgba(0, 0, 0, 0.4)', borderWidth: '1.5px', color: 'rgba(0, 0, 0, 0.8)' }}>
-                          Review
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -824,13 +1299,27 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
             )}
 
             <div className="space-y-4">
-              {filteredRequests.length === 0 ? (
+              {isOverviewLoading ? (
+                <Card className="border-2 border-primary/10">
+                  <CardContent className="p-12 text-center" role="status" aria-live="polite">
+                    <p className="text-sm text-muted-foreground">Loading reimbursement requests...</p>
+                  </CardContent>
+                </Card>
+              ) : overviewError ? (
+                <Card className="border-2 border-primary/10">
+                  <CardContent className="p-12 text-center" role="alert">
+                    <p className="text-sm text-muted-foreground">{overviewError}</p>
+                  </CardContent>
+                </Card>
+              ) : filteredRequests.length === 0 ? (
                 <Card className="border-2 border-dashed border-primary/20">
                   <CardContent className="p-12 text-center">
                     <Filter className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                     <h3 className="text-lg font-semibold mb-2">No requests found</h3>
                     <p className="text-muted-foreground mb-4">
-                      No reimbursement requests match your current filters.
+                      {hasActiveFilters
+                        ? "No reimbursement requests match your current filters."
+                        : "No reimbursement requests have been submitted yet."}
                     </p>
                     {hasActiveFilters && (
                       <Button
@@ -992,12 +1481,19 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                 variant="outline"
                                 size="sm"
                                 className="flex-1"
-                                onClick={() => setPreviewDocument({ type: 'prescription', name: selectedRequest.prescription.name })}
+	                                onClick={() => void handlePreviewDocument(selectedRequest.prescription)}
+	                                disabled={!selectedRequest.prescription.storagePath}
                               >
                                 <Eye className="h-4 w-4 mr-2" />
                                 Preview
                               </Button>
-                              <Button variant="outline" size="sm" className="flex-1">
+	                              <Button
+	                                variant="outline"
+	                                size="sm"
+	                                className="flex-1"
+	                                onClick={() => void handleDownloadDocument(selectedRequest.prescription)}
+	                                disabled={!selectedRequest.prescription.storagePath}
+	                              >
                                 <Download className="h-4 w-4 mr-2" />
                                 Download
                               </Button>
@@ -1035,12 +1531,37 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                   variant="outline"
                                   size="sm"
                                   className="flex-1"
-                                  onClick={() => setPreviewDocument({ type: 'receipt', name: receipt.fileName, index })}
+	                                  onClick={() => void handlePreviewDocument({
+	                                    id: receipt.id,
+	                                    type: "receipt",
+	                                    name: receipt.fileName,
+	                                    fileName: receipt.fileName,
+	                                    mimeType: receipt.mimeType,
+	                                    storageBucket: receipt.storageBucket,
+	                                    storagePath: receipt.storagePath,
+	                                    index
+	                                  })}
+	                                  disabled={!receipt.storagePath}
                                 >
                                   <Eye className="h-4 w-4 mr-2" />
                                   Preview
                                 </Button>
-                                <Button variant="outline" size="sm" className="flex-1">
+	                                <Button
+	                                  variant="outline"
+	                                  size="sm"
+	                                  className="flex-1"
+	                                  onClick={() => void handleDownloadDocument({
+	                                    id: receipt.id,
+	                                    type: "receipt",
+	                                    name: receipt.fileName,
+	                                    fileName: receipt.fileName,
+	                                    mimeType: receipt.mimeType,
+	                                    storageBucket: receipt.storageBucket,
+	                                    storagePath: receipt.storagePath,
+	                                    index
+	                                  })}
+	                                  disabled={!receipt.storagePath}
+	                                >
                                   <Download className="h-4 w-4 mr-2" />
                                   Download
                                 </Button>
@@ -1158,36 +1679,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
                       {/* Preview Column - Desktop (sm and above) */}
                       {previewDocument && (
-                        <div className="hidden sm:block sm:border-l sm:pl-6 space-y-4">
-                          <div className="flex items-center justify-between">
-                            <h3 className="font-semibold text-lg">Document Preview</h3>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPreviewDocument(null)}
-                            >
-                              <XIcon className="h-4 w-4" />
-                            </Button>
-                          </div>
-
-                          <div className="bg-gray-100 rounded-lg p-4 min-h-[500px] flex items-center justify-center">
-                            <div className="text-center space-y-4">
-                              <FileText className="h-16 w-16 mx-auto text-gray-400" />
-                              <div>
-                                <p className="font-medium text-gray-700">
-                                  {previewDocument.type === 'prescription' ? 'Prescription' : `Receipt ${(previewDocument.index || 0) + 1}`}
-                                </p>
-                                <p className="text-sm text-gray-500">{previewDocument.name}</p>
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                Preview functionality - In production, this would display the actual document image or PDF
-                              </p>
-                              <Button variant="outline" size="sm">
-                                <Download className="h-4 w-4 mr-2" />
-                                Download Document
-                              </Button>
-                            </div>
-                          </div>
+                        <div className="hidden sm:block sm:border-l sm:pl-6">
+                          {renderDocumentPreviewPanel(previewDocument)}
 
                           <div className="text-xs text-muted-foreground">
                             <p className="font-medium mb-2">Compare with:</p>
@@ -1206,35 +1699,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     {previewDocument && (
                       <div className="sm:hidden fixed inset-0 bg-white z-50 p-6 overflow-y-auto">
                         <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <h3 className="font-semibold text-lg">Document Preview</h3>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPreviewDocument(null)}
-                            >
-                              <XIcon className="h-4 w-4" />
-                            </Button>
-                          </div>
-
-                          <div className="bg-gray-100 rounded-lg p-4 min-h-[400px] flex items-center justify-center">
-                            <div className="text-center space-y-4">
-                              <FileText className="h-16 w-16 mx-auto text-gray-400" />
-                              <div>
-                                <p className="font-medium text-gray-700">
-                                  {previewDocument.type === 'prescription' ? 'Prescription' : `Receipt ${(previewDocument.index || 0) + 1}`}
-                                </p>
-                                <p className="text-sm text-gray-500">{previewDocument.name}</p>
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                Preview functionality - In production, this would display the actual document image or PDF
-                              </p>
-                              <Button variant="outline" size="sm">
-                                <Download className="h-4 w-4 mr-2" />
-                                Download Document
-                              </Button>
-                            </div>
-                          </div>
+                          {renderDocumentPreviewPanel(previewDocument, true)}
 
                           <div className="text-xs text-muted-foreground">
                             <p className="font-medium mb-2">Compare with:</p>
@@ -1395,27 +1860,40 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     <TrendingUp className="h-5 w-5 mr-2" />
                     Department Breakdown
                   </CardTitle>
-                  <CardDescription>Reimbursements by department</CardDescription>
+                  <CardDescription>Approved reimbursements by department</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-3">
-                    {departmentStatsMedicine.map((dept, index) => {
-                      const opticalDept = departmentStatsOptical[index];
-                      const total = dept.totalAmount + opticalDept.totalAmount;
-                      return (
+                  {isOverviewLoading ? (
+                    <div className="min-h-[132px] flex items-center justify-center" role="status" aria-live="polite">
+                      <p className="text-sm text-muted-foreground">Loading department data...</p>
+                    </div>
+                  ) : overviewError ? (
+                    <div className="min-h-[132px] flex items-center justify-center text-center" role="alert">
+                      <p className="text-sm text-muted-foreground">{overviewError}</p>
+                    </div>
+                  ) : departmentBreakdown.length === 0 ? (
+                    <div className="min-h-[132px] flex items-center justify-center text-center">
+                      <p className="text-sm text-muted-foreground">No approved reimbursements found for this month.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {departmentBreakdown.map((dept) => (
                         <div key={dept.department}>
                           <div className="flex justify-between items-center mb-1">
                             <span className="font-medium">{dept.department}</span>
-                            <span className="font-bold">₱{total.toLocaleString()}</span>
+                            <span className="font-bold">₱{dept.totalAmount.toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between items-center text-sm text-muted-foreground pl-4">
-                            <span>Medicine: ₱{dept.totalAmount.toLocaleString()}</span>
-                            <span>Optical: ₱{opticalDept.totalAmount.toLocaleString()}</span>
+                            <span>Medicine: ₱{dept.medicine.toLocaleString()}</span>
+                            <span>Optical: ₱{dept.optical.toLocaleString()}</span>
                           </div>
+                          <p className="text-xs text-muted-foreground pl-4">
+                            {dept.requestCount} request{dept.requestCount === 1 ? "" : "s"}
+                          </p>
                         </div>
-                      );
-                    })}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Button className="w-full" variant="outline">
                       <ImageIcon className="h-4 w-4 mr-2" />
@@ -1442,23 +1920,23 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Full Name</Label>
-                    <p className="font-medium">{admin.name}</p>
+                    <p className="font-medium">{adminProfile.name}</p>
                   </div>
                   <div>
                     <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Employee ID</Label>
-                    <p className="font-medium">{admin.id}</p>
+                    <p className="font-medium">{adminProfile.id}</p>
                   </div>
                   <div>
                     <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Designation</Label>
-                    <p className="font-medium">{admin.designation}</p>
+                    <p className="font-medium">{adminProfile.designation}</p>
                   </div>
                   <div>
                     <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Department</Label>
-                    <p className="font-medium">{admin.department}</p>
+                    <p className="font-medium">{adminProfile.department}</p>
                   </div>
                   <div className="md:col-span-2">
                     <Label className="text-sm" style={{ color: 'rgba(0, 0, 0, 0.72)' }}>Email Address</Label>
-                    <p className="font-medium">{admin.email}</p>
+                    <p className="font-medium">{adminProfile.email}</p>
                   </div>
                 </div>
               </CardContent>

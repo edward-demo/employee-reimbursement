@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { LoginScreen } from "./components/LoginScreen";
 import type { EmployeeDashboardData } from "./components/EmployeeDashboard";
+import type { AdminProfileData } from "./components/AdminDashboard";
 import type { LineManagerProfileData } from "./components/LineManagerDashboard";
 import { Card, CardContent, CardHeader } from "./components/ui/card";
 import { Skeleton } from "./components/ui/skeleton";
@@ -61,11 +62,6 @@ interface ReimbursementSubmitPayload {
   receipts: ReimbursementSubmitReceipt[];
   notes: string;
 }
-
-const createRequestNumber = (category: ReimbursementCategory) => {
-  const categoryPrefix = category === "medicine" ? "MED" : "OPT";
-  return `REQ-${categoryPrefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-};
 
 const sanitizeStorageFileName = (fileName: string) => (
   fileName
@@ -326,12 +322,14 @@ function AppRoutes() {
   const location = useLocation();
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [employeeDashboardData, setEmployeeDashboardData] = useState<EmployeeDashboardData | undefined>();
+  const [adminProfileData, setAdminProfileData] = useState<AdminProfileData | undefined>();
   const [lineManagerProfileData, setLineManagerProfileData] = useState<LineManagerProfileData | undefined>();
   const [isRestoringSession, setIsRestoringSession] = useState(true);
 
   const clearAuthenticatedState = () => {
     setUserRole(null);
     setEmployeeDashboardData(undefined);
+    setAdminProfileData(undefined);
     setLineManagerProfileData(undefined);
     localStorage.removeItem(storedPortalRoleKey);
   };
@@ -465,6 +463,7 @@ function AppRoutes() {
       .from("reimbursement_requests")
       .select(`
         request_number,
+        request_reference_number,
         category,
         status,
         current_review_stage,
@@ -547,7 +546,7 @@ function AppRoutes() {
           : "Medicine Reimbursement";
 
         return {
-          id: request.request_number,
+          id: request.request_reference_number ?? request.request_number,
           medicineName: requestItemNames || fallbackRequestTitle,
           quantity: request.category === "optical" ? "Optical claim" : "Medicine claim",
           totalPrice: Number(request.claim_amount ?? 0),
@@ -593,6 +592,45 @@ function AppRoutes() {
       name: (profile as any).full_name,
       designation: (profile as any).designation,
       department: department?.name ?? "Unassigned"
+    };
+  };
+
+  const loadAdminProfileData = async (appUserId: string): Promise<AdminProfileData> => {
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("employee_profiles")
+      .select(`
+        employee_number,
+        full_name,
+        designation,
+        departments(name),
+        users(email)
+      `)
+      .eq("user_id", appUserId)
+      .single();
+
+    if (profileError || !profile) {
+      throw new Error(profileError?.message ?? "No admin profile is linked to this user.");
+    }
+
+    const department = Array.isArray((profile as any).departments)
+      ? (profile as any).departments[0]
+      : (profile as any).departments;
+    const user = Array.isArray((profile as any).users)
+      ? (profile as any).users[0]
+      : (profile as any).users;
+    const email = user?.email ?? "";
+    const name = (profile as any).full_name?.trim() || email || "Admin User";
+
+    return {
+      name,
+      id: (profile as any).employee_number?.trim() || "Unassigned",
+      designation: (profile as any).designation?.trim() || "Admin",
+      department: department?.name ?? "Unassigned",
+      email
     };
   };
 
@@ -704,6 +742,7 @@ function AppRoutes() {
     if (destinationRole === 'employee') {
       const employeeProfile = await getEmployeeDashboardProfile(appUserId);
       setEmployeeDashboardData(undefined);
+      setAdminProfileData(undefined);
       setLineManagerProfileData(undefined);
       setUserRole(destinationRole);
       localStorage.setItem(storedPortalRoleKey, destinationRole);
@@ -714,9 +753,12 @@ function AppRoutes() {
       const profileData = await loadLineManagerProfileData(appUserId);
       setLineManagerProfileData(profileData);
       setEmployeeDashboardData(undefined);
+      setAdminProfileData(undefined);
       setUserRole(destinationRole);
       localStorage.setItem(storedPortalRoleKey, destinationRole);
     } else {
+      const profileData = await loadAdminProfileData(appUserId);
+      setAdminProfileData(profileData);
       setEmployeeDashboardData(undefined);
       setLineManagerProfileData(undefined);
       setUserRole(destinationRole);
@@ -933,7 +975,6 @@ function AppRoutes() {
       .from("reimbursement_requests")
       .insert({
         reimbursement_request_id: requestId,
-        request_number: createRequestNumber(payload.category),
         employee_profile_id: employee.employeeProfileId,
         category: payload.category,
         status: "pending",
@@ -1125,7 +1166,11 @@ function AppRoutes() {
       return renderUnauthorizedRedirect();
     }
 
-    return <AdminDashboard onLogout={handleLogout} />;
+    if (!adminProfileData) {
+      return <EmployeeDashboardLoadingFallback />;
+    }
+
+    return <AdminDashboard onLogout={handleLogout} adminProfile={adminProfileData} />;
   };
 
   const renderLineManagerDashboard = () => {
